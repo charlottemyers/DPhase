@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- Environments ---
+.venv/
+venv/
+env/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Numerical output ---
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pkl
+
+# --- Figures ---
+figures/
+*.pdf
+*.png
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store

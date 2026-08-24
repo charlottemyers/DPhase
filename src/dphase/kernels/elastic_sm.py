@@ -9,11 +9,11 @@ Framework:
   - Collision term: Binder et al. Eq.(8), semi-relativistic Fokker-Planck,
     valid for arbitrary f_chi(p).
 
-assumptions:
+Assumptions:
   - SM bath is thermal at T
   - t-channel mediator is the dark photon A (for chi+f)
   - FP valid: m_bath << m_scatter
-  - Fermi-Dirac for SM fermions (included exactly in gamma integral)
+  - Fermi-Dirac for SM fermions (included exactly in integral)
 """
 
 import numpy as np

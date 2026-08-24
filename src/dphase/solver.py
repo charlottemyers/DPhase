@@ -41,8 +41,7 @@ Two deviations from a pure implicit step:
     fixed during the Newton iteration (`lag_scatter_in_newton`). That makes
     the scheme IMEX rather than fully implicit.
   * If `root` fails to converge, the step falls back to explicit Euler and
-    prints a warning. That keeps a run alive, but the resulting step is
-    unconditionally unstable, so warnings here should not be ignored.
+    prints a warning.
 
 """
 
@@ -64,7 +63,7 @@ from dphase.kernels import apply_xA_elastic_loss, gamma_from_grid
 # Positive floor applied to f before forming loss rates
 _F_FLOOR = 1e-100
 
-# Index of the elastic (chi f -> chi f) entry in the 5-tuple returned by `compute_dfdt`.
+# Index of the elastic (chi f -> chi f) entry in the tuple returned by `compute_dfdt`.
 _EL_TERM = 3
 
 

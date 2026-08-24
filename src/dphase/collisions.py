@@ -1,8 +1,5 @@
 """
-Collision operators: the right-hand sides the solver integrates.
-
-This module is the seam between the precomputed kernels in `dphase.kernels`
-and the time integrator in `dphase.solver`.
+Collision operators: the right-hand sides that the solver integrates.
 
 Calling convention
 ------------------
@@ -12,9 +9,9 @@ Every `*_collision_rhs*` function has the signature
 
 where `y_flat` is the flattened multi-species state vector described in
 `dphase.solver`. Each operator writes df/dt into the slices of the species it
-affects and exact zeros elsewhere, so the solver can simply add them all up.
+affects and exact zeros elsewhere, so the solver can simply add them.
 
-Two conventions:
+A few conventions:
 
   * Kernels are looked up by nearest temperature, never interpolated. Accuracy
     comes from tabulating `state.T_grid` finely enough.
@@ -29,7 +26,7 @@ from dphase.constants import FERMIONS
 from dphase.model import A_ff_decay_m2
 from dphase.kernels import (
     gain_cache_from_grid_nearest, apply_gain_cache, kernel_from_grid_nearest,
-    _xA_kernel_index, apply_xA_gain_cache, gamma_from_grid
+    _xA_kernel_index, apply_xA_cache, gamma_from_grid
 )
 
 def loss_self_annih_dfdt(p, f, K, dlogp):
@@ -467,7 +464,7 @@ def xA_elastic_collision_rhs(T, y_flat, state, names, Np):
 
     # The cache stores a per-event delta, so one pass yields gain AND loss
     # together -- there is no separate K_loss contraction here.
-    df_chi_total, df_A_total = apply_xA_gain_cache(cache, f_chi, f_A)
+    df_chi_total, df_A_total = apply_xA_cache(cache, f_chi, f_A)
     out[sl_chi] = df_chi_total
     out[sl_A]   = df_A_total
     return out

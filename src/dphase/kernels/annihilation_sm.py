@@ -124,7 +124,7 @@ def kernel_xxff(
             params=params,
         )
 
-        # Colour multiplicity applied here, not inside the matrix element.
+        # Colour multiplicity applied here, not inside matrix element.
         sigma_sum += Nc * sigma_f
 
     vMol = v_moller_from_s_vectorized(s, E1, E2, m_initial)
@@ -142,7 +142,7 @@ def build_xxff_kernels(T_span, state, m_initial, m_mediator):
 
     One kernel per temperature, because the comoving grid maps to different
     physical momenta at each T -- see `dphase.grid`. Always sums over the full
-    `constants.FERMIONS` set, neutrinos included.
+    `constants.FERMIONS` set.
 
     Parameters
     ----------

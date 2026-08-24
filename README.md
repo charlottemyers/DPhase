@@ -1,6 +1,6 @@
 # DPhase
 
-Phase-space Boltzmann solver for dark photon dark matter.
+Phase-space Boltzmann solver for dark photon (DP) dark matter.
 
 DPhase solves the momentum-resolved Boltzmann equation for a Dirac
 fermion dark matter candidate χ coupled to the Standard Model through a
@@ -98,7 +98,7 @@ with plots.
 | Module | Contents |
 |---|---|
 | `constants.py` | SM fermion content, electroweak parameters, numerical guards |
-| `kinematics.py` | Källén function, Møller velocity |
+| `kinematics.py` | Källen function, Møller velocity |
 | `grid.py` | Comoving momentum grid, species records, log bin edges |
 | `state.py` | Parameter and kernel container; derived densities |
 | `model.py` | **Dark photon cross sections, widths, and couplings** |

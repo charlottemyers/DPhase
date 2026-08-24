@@ -1,5 +1,5 @@
 """
-Elastic chi A' -> chi A' scattering -- "dark Compton".
+Dark Compton: elastic chi A' -> chi A' scattering.
 
 This is the number-preserving / dark-sector cell of the taxonomy in
 `dphase.kernels`. It moves chi and A' between momentum bins without changing

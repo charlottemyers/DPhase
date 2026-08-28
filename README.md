@@ -19,7 +19,7 @@ fermion dark matter candidate $\chi$ coupled to the Standard Model through a kin
     as a full $2\rightarrow2$ redistribution operator
   - $Z_D \rightarrow f\bar{f}$ decay and inverse decay
 - A number-density solver ([`cbe.py`](src/dphase/cbe.py)) alongside the
-  phase-space one to compare the full vs integrated results
+  phase-space one to compare the full vs moment-based results
 
 
 ## Installation
@@ -41,7 +41,7 @@ Requires Python 3.10+, NumPy 2.0+, SciPy, numba 0.61+, and mpmath.
 
 ## Quickstart
 
-*Notation: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.*
+*Notation*: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.
 
 The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run.
 
@@ -95,12 +95,12 @@ See [`examples/example.ipynb`](examples/example.ipynb) for a worked example.
 
 `kernels/` is organized on two axes: which sector the process couples to, and whether it changes particle number.
 
-|  | dark sector | SM bath |
+|  | Dark Sector | SM Bath |
 |---|---|---|
-| **number-changing** | `annihilation_hidden.py` ($\chi\bar{\chi} \leftrightarrow Z_D Z_D$) | `annihilation_sm.py` ($\chi\bar{\chi} \rightarrow f\bar{f}$) |
-| **number-preserving** | `elastic_hidden.py` ($\chi Z_D \rightarrow \chi Z_D$) | `elastic_sm.py` ($\chi f \rightarrow \chi f$) |
+| **Number-changing** | `annihilation_hidden.py` ($\chi\bar{\chi} \leftrightarrow Z_D Z_D$) | `annihilation_sm.py` ($\chi\bar{\chi} \rightarrow f\bar{f}$) |
+| **Number-preserving** | `elastic_hidden.py` ($\chi Z_D \rightarrow \chi Z_D$) | `elastic_sm.py` ($\chi f \rightarrow \chi f$) |
 
-**On using a different model.** Everything except `model.py` is independent of the DP. To study a different mediator, replace that one module with different cross sections and decay widths, keeping the same function signatures and units.
+**On using a different model:** Everything except `model.py` is independent of the DP. To study a different mediator, replace that one module with different cross sections and decay widths, keeping the same function signatures and units.
 
 
 <!-- ## Physics and references

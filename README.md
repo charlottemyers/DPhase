@@ -41,9 +41,9 @@ Requires Python 3.10+, NumPy 2.0+, SciPy, numba 0.61+, and mpmath.
 
 ## Quickstart
 
-*Notation*: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.
+*Notation note*: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.
 
-The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run.
+<!-- The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run. -->
 
 ```python
 import numpy as np

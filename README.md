@@ -3,35 +3,23 @@
 Phase-space Boltzmann solver for dark photon (DP) dark matter.
 
 DPhase solves the momentum-resolved Boltzmann equation for a Dirac
-fermion dark matter candidate χ coupled to the Standard Model through a
-kinetically mixed dark photon A′. It evolves the distribution function
-f<sub>χ</sub>(p, T) directly rather than assuming a thermal shape and tracking
-only the number density, so it captures departures from kinetic equilibrium
-during and after freeze-out.
+fermion dark matter candidate $\chi$ coupled to the Standard Model through a kinetically mixed dark photon $Z_D$. It evolves the distribution functions $f_\chi(p,T)$ and $f_{Z_D}(p,T)$ directly rather than assuming a thermal shape, so it captures departures from kinetic equilibrium.
 
-## Scope
 
-**What it does**
+## Features
 
-- Full phase-space evolution of f<sub>χ</sub>(p, T) and f<sub>A′</sub>(p, T) on
-  a log-spaced comoving momentum grid, with no thermal-shape assumption on
-  either species
-- Freeze-out and freeze-in regimes
+- Full phase-space evolution of $f_\chi(p,T)$ and $f_{Z_D}(p,T)$ on
+  a comoving momentum grid, with no thermal-shape assumption on either species
+- Freeze-out, freeze-in, and the transitional regime are handled by the same solver — no switching between codes or approximations at the boundary.
 - Collision terms:
-  - χχ̄ → f f̄ annihilation to all kinematically accessible SM fermions, with
-    full A′–Z mixing and s-dependent cross sections
-  - χχ̄ ↔ A′A′, both directions, with an explicit gain (redistribution) term
-    rather than a number-conserving approximation
-  - χ f → χ f elastic scattering off the SM bath, as a semi-relativistic
-    Fokker–Planck operator
-  - χ A′ → χ A′ "dark Compton" elastic scattering, as a full 2→2
-    redistribution operator
-  - A′ → f f̄ decay and inverse decay
-- Hidden-sector temperature evolved as a dynamical variable, not assumed equal
-  to the SM temperature
+  - $\chi\bar{\chi} \rightarrow f\bar{f}$: annihilation to all kinematically accessible SM fermions, with full $Z_D$--$Z$ mixing
+  - $\chi\bar{\chi} \leftrightarrow Z_D Z_D$: hidden sector annihilation, as a full $2\rightarrow2$ redistribution operator
+  - $\chi f \rightarrow \chi f$: elastic scattering off the SM bath, as a semi-relativistic Fokker--Planck operator
+  - $\chi Z_D \rightarrow \chi Z_D$ dark Compton elastic scattering,
+    as a full $2\rightarrow2$ redistribution operator
+  - $Z_D \rightarrow f\bar{f}$ decay and inverse decay
 - A number-density solver ([`cbe.py`](src/dphase/cbe.py)) alongside the
-  phase-space one, sharing the same cross sections — so the two can be compared
-  on identical physics inputs
+  phase-space one to compare the full vs integrated results
 
 
 ## Installation
@@ -53,9 +41,9 @@ Requires Python 3.10+, NumPy 2.0+, SciPy, numba 0.61+, and mpmath.
 
 ## Quickstart
 
-The phase-space solver needs its collision kernels tabulated on a temperature
-grid before it can run. That precomputation is the expensive part and is
-currently driven explicitly:
+*Notation: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.*
+
+The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run.
 
 ```python
 import numpy as np
@@ -72,7 +60,6 @@ grid = dphase.PhaseSpaceGrid(ptilde_min=0.1, ptilde_max=50.0 * T_ref,
 
 # 2. State and model parameters
 state = dphase.PhaseSpaceState(grid, [chi, A])
-state.gstar_func = dphase.gstar_interp
 state.epsilon    = 1e-10       # kinetic mixing
 state.alphaD     = 1e-6        # dark fine structure constant
 state.T_grid     = np.geomspace(T_ref, T_final, 150)
@@ -84,61 +71,36 @@ state.T_grid     = np.geomspace(T_ref, T_final, 150)
 T_grid, snapshots = dphase.solve_BE(state, state.T_grid)
 ```
 
-`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature
-step, on the comoving grid. Convert to an abundance with
+`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature step, on the comoving grid. Convert to an abundance with
 `state.total_DM_number_density(T)`, `dphase.Y`, and
 `dphase.relic_abundance`.
 
-See [`examples/example.ipynb`](examples/example.ipynb) for a worked example
-with plots.
+See [`examples/example.ipynb`](examples/example.ipynb) for a worked example.
 
 
 ## Module layout
 
 | Module | Contents |
 |---|---|
-| `constants.py` | SM fermion content, electroweak parameters, numerical guards |
-| `kinematics.py` | Källen function, Møller velocity |
-| `grid.py` | Comoving momentum grid, species records, log bin edges |
+| `constants.py` | SM fermion content, EW parameters, numerical guards |
+| `kinematics.py` | Källén function, Møller velocity |
+| `grid.py` | Comoving momentum grid, species records, grid setup |
 | `state.py` | Parameter and kernel container; derived densities |
-| `model.py` | **Dark photon cross sections, widths, and couplings** |
+| `model.py` | DP cross sections, widths, and couplings |
 | `kernels/` | Precomputed collision kernels, one submodule per process class |
 | `collisions.py` | Collision operators, assembled from the kernels |
 | `solver.py` | Phase-space ODE driver (`solve_BE`) |
-| `cosmology.py` | g<sub>*</sub>(T), Hubble rate, entropy, t(T) |
-| `cbe.py` | Number-density solver — the validation baseline |
+| `cosmology.py` | $g_*(T)$, Hubble rate, entropy, $t(T)$ |
+| `cbe.py` | Number-density solver -- the validation baseline |
 
-`kernels/` is organized on two axes: which sector the process couples to, and
-whether it changes particle number.
+`kernels/` is organized on two axes: which sector the process couples to, and whether it changes particle number.
 
 |  | dark sector | SM bath |
 |---|---|---|
-| **number-changing** | `annihilation_hidden.py` (χχ̄ ↔ A′A′) | `annihilation_sm.py` (χχ̄ → f f̄) |
-| **number-preserving** | `elastic_hidden.py` (χA′ → χA′) | `elastic_sm.py` (χf → χf) |
+| **number-changing** | `annihilation_hidden.py` ($\chi\bar{\chi} \leftrightarrow Z_D Z_D$) | `annihilation_sm.py` ($\chi\bar{\chi} \rightarrow f\bar{f}$) |
+| **number-preserving** | `elastic_hidden.py` ($\chi Z_D \rightarrow \chi Z_D$) | `elastic_sm.py` ($\chi f \rightarrow \chi f$) |
 
-**On using a different model.** Everything except `model.py` is independent of
-the dark photon. To study a different mediator, replace that one module with
-your own cross sections and decay widths, keeping the same function signatures
-and units.
-
-<!-- ## Conventions
-
-- Natural units, ħ = c = k<sub>B</sub> = 1
-- All masses, energies, momenta and temperatures in GeV; cross sections in -->
-  <!-- GeV<sup>-2</sup>
-- Hypercharge normalised as Q = T<sup>3</sup> + Y, with **no** factor of ½
-  (some references use Q = T<sup>3</sup> + Y/2 and doubled Y)
-- T<sup>3</sup> = 0 for all right-handed fields
-- `dof` counts internal degrees of freedom of one species: 2 for χ (spin
-  states only — χ̄ is a separate population, added by
-  `total_DM_number_density`), 3 for the A′ polarisations
-- |M|² for annihilation is **averaged** over initial spins and **summed** over
-  final spins; colour multiplicity N<sub>c</sub> is applied by the caller, not
-  folded into the matrix element
-- Cross sections use the per-dof-averaged convention, so the g<sub>χ</sub>
-  factors are applied at the rate level in `collisions.py`, not inside `model.py`
-- Comoving momentum p̃ = a(t) p, with a(T<sub>ref</sub>) = 1
-- Non-reduced Planck mass, pairing with H = √(8πρ/3)/M<sub>Pl</sub> -->
+**On using a different model.** Everything except `model.py` is independent of the DP. To study a different mediator, replace that one module with different cross sections and decay widths, keeping the same function signatures and units.
 
 
 <!-- ## Physics and references

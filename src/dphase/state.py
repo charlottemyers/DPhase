@@ -8,9 +8,8 @@ needs with them.
   2. precomputation -- couplings, the temperature grid, and the collision
                        kernels/caches tabulated on it
 
-Stage 2 is currently done by hand at the call site (see
-`examples/example.ipynb`) and every attribute it sets is declared in
-`__init__` below, initialised to None.
+Stage 2 is done by hand at the call site (see `examples/example.ipynb`)
+and every attribute it sets is declared in `__init__` below, initialised to None.
 """
 
 import numpy as np

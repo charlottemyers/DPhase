@@ -8,7 +8,7 @@ reduces to
 
 with no drift term: because ptilde = a(t) p is comoving, free expansion moves
 no probability between bins, so every right-hand side here is a genuine
-collision effect. See `dphase.grid` for why that coordinate was chosen.
+collision effect.
 
 State vector layout
 -------------------
@@ -34,14 +34,6 @@ taken as **backward Euler**,
 solved for f_next with `scipy.optimize.root`. Backward Euler is L-stable, which is what matters here: the
 collision terms are very stiff near freeze-out, where rates exceed H by many orders of magnitude. An explicit
 step of the same size would be unusable.
-
-Two deviations from a pure implicit step:
-
-  * The elastic operator can be lagged -- evaluated at f_current and held
-    fixed during the Newton iteration (`lag_scatter_in_newton`). That makes
-    the scheme IMEX rather than fully implicit.
-  * If `root` fails to converge, the step falls back to explicit Euler and
-    prints a warning.
 
 """
 

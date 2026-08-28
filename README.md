@@ -82,16 +82,16 @@ See [`examples/example.ipynb`](examples/example.ipynb) for a worked example.
 
 | Module | Contents |
 |---|---|
-| `constants.py` | SM fermion content, EW parameters, numerical guards |
+| `constants.py` | SM fermion content, EW parameters, unit conversions |
 | `kinematics.py` | Källén function, Møller velocity |
 | `grid.py` | Comoving momentum grid, species records, grid setup |
 | `state.py` | Parameter and kernel container; derived densities |
 | `model.py` | DP cross sections, widths, and couplings |
-| `kernels/` | Precomputed collision kernels, one submodule per process class |
+| `kernels/` | Precomputed collision kernels, one submodule per process |
 | `collisions.py` | Collision operators, assembled from the kernels |
-| `solver.py` | Phase-space ODE driver (`solve_BE`) |
-| `cosmology.py` | $g_*(T)$, Hubble rate, entropy, $t(T)$ |
-| `cbe.py` | Number-density solver -- the validation baseline |
+| `solver.py` | Phase-space ODE solver (`solve_BE`) |
+| `cosmology.py` | $g_*(T)$, Hubble rate, entropy |
+| `cbe.py` | Number-density Boltzmann solver  |
 
 `kernels/` is organized on two axes: which sector the process couples to, and whether it changes particle number.
 

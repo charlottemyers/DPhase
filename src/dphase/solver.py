@@ -332,27 +332,24 @@ def solve_BE(state, T_grid,
             Returns
             -------
             sc_scale : multiplier in (0, 1] for the operator
-            ratio_sc : measured Gamma/H (0 if the gamma grids are absent)
+            ratio_sc : measured Gamma/H (0 if the gamma grids are all zero)
             eta_sc   : measured step impact, for the progress print
             """
             if not scatter_enabled:
                 return 1.0, 0.0, 0.0
 
             # --- limiter 1: physical rate against Hubble ---
-            ratio_sc = 0.0
-            scale_phys = 1.0
-            has_gamma_grid = all(
-                getattr(state, attr, None) is not None
-                for attr in ("gamma_grid_chi", "gamma_grid_A"))
-            if has_gamma_grid:
-                gamma_sc_chi = gamma_from_grid(T_eval, state.T_grid,
-                                               state.gamma_grid_chi)
-                gamma_sc_A = gamma_from_grid(T_eval, state.T_grid,
-                                             state.gamma_grid_A)
-                gamma_sc = max(gamma_sc_chi, gamma_sc_A)
-                ratio_sc = gamma_sc / H
-                scale_phys = (Gamma_H_max / ratio_sc
-                              if ratio_sc > Gamma_H_max else 1.0)
+            # Unassigned rate grids read as zeros (see PhaseSpaceState), so no
+            # presence check is needed: an absent grid contributes gamma = 0
+            # and leaves this cap inactive. If scattering looks inert, check
+            # state.zeroed_rate_grids().
+            gamma_sc = max(
+                gamma_from_grid(T_eval, state.T_grid, state.gamma_grid_chi),
+                gamma_from_grid(T_eval, state.T_grid, state.gamma_grid_A),
+            )
+            ratio_sc = gamma_sc / H
+            scale_phys = (Gamma_H_max / ratio_sc
+                          if ratio_sc > Gamma_H_max else 1.0)
 
             # --- limiter 2: fractional step impact ---
             dfdt_el = elastic_collision_rhs(T_eval, f_eval, state, names, Np)

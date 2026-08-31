@@ -556,7 +556,7 @@ def apply_xA_elastic_loss(p_grid, dlogp, K_loss, f_chi, f_A):
 # Temperature-grid builder
 # ===========================================================================
 
-def build_xAxA_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4, average=True):
+def build_xAxA_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4):
     """
     Tabulate the dark Compton cache on a temperature grid.
 
@@ -587,7 +587,7 @@ def build_xAxA_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4, average
             p_grid=p, dlogp=state.grid.dlogp,
             m_chi=m_chi, m_A=m_A, alphaD=state.alphaD,
             Nmu_in=Nmu_in, Nmu_cm=Nmu_cm, Nphi_cm=Nphi_cm,
-            average=average,
+            average = True
         )
         out.append(cache_T)
         if i % max(1, n_T // 10) == 0:

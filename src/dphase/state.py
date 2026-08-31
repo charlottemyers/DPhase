@@ -10,6 +10,10 @@ needs with them.
 
 Stage 2 is done by hand at the call site (see `examples/example.ipynb`)
 and every attribute it sets is declared in `__init__` below, initialised to None.
+
+The exception is the per-temperature rate grids, which read as zeros until
+assigned -- so a process whose rate is identically zero needs no assignment at
+all. See `_ZeroDefaultRateGrid` and `PhaseSpaceState.zeroed_rate_grids`.
 """
 
 import numpy as np
@@ -17,6 +21,48 @@ import numpy as np
 import dphase
 from dphase.cosmology import entropy_density
 from dphase.grid import PhaseSpaceGrid, PhaseSpaceSpecies
+
+
+class _ZeroDefaultRateGrid:
+    """
+    A per-temperature rate grid that reads as zeros until it is assigned.
+
+    Some rate contributions are identically zero for the dark photon model --
+    A f -> A f elastic scattering, for instance, whose correct rate scales as
+    epsilon^4 and is dropped by `kernels.elastic_sm`. Rather than make the
+    caller build and assign an array of zeros by hand, those attributes default
+    to zeros here, so only the non-trivial grids need assigning.
+
+    The zeros are sized from `T_grid`, which is why this has to be lazy: the
+    length is not known when the state is constructed. Assigning None resets
+    the attribute to the zero default.
+
+    Only ever use this for scalar-per-temperature RATE grids, where "absent"
+    genuinely means "this process contributes nothing". Do NOT use it for the
+    collision kernels or event caches: a missing kernel means the operator
+    cannot run at all, and that should fail loudly rather than silently
+    evaluate to zero.
+    """
+
+    def __set_name__(self, owner, name):
+        self.public_name = name
+        self.private_name = "_" + name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        value = getattr(obj, self.private_name, None)
+        if value is not None:
+            return value
+        if obj.T_grid is None:
+            raise AttributeError(
+                f"{self.public_name} defaults to zeros sized from T_grid, but "
+                "T_grid has not been set yet. Assign state.T_grid first.")
+        return np.zeros(len(obj.T_grid), dtype=float)
+
+    def __set__(self, obj, value):
+        setattr(obj, self.private_name,
+                None if value is None else np.asarray(value, dtype=float))
 
 
 class PhaseSpaceState:
@@ -27,6 +73,15 @@ class PhaseSpaceState:
     expansion. Collision terms need physical momenta, which the solver obtains
     from `self.grid.p_phys(T, self.gstar_func)` at each temperature.
     """
+
+    # Rate grids that read as zeros until assigned -- see _ZeroDefaultRateGrid.
+    # gamma_grid_A is normally left alone: A f -> A f is dropped as an
+    # eps^4 effect, so its rate is zero by construction.
+    gamma_grid_chi = _ZeroDefaultRateGrid()
+    gamma_grid_A = _ZeroDefaultRateGrid()
+
+    #: names of the attributes above, for `zeroed_rate_grids`
+    _RATE_GRIDS = ("gamma_grid_chi", "gamma_grid_A")
 
     def __init__(self, grid: PhaseSpaceGrid, species: list[PhaseSpaceSpecies]):
         # --- set at construction ---
@@ -52,6 +107,8 @@ class PhaseSpaceState:
         self.gain_caches_xxAA = None  # list of NT gain-cache dicts
 
         # --- chi f -> chi f, from kernels.elastic_sm   ---
+        # Both default to zeros (see the class body); assign gamma_grid_chi
+        # from `kernels.build_xfxf_kernels` to switch elastic scattering on.
         self.gamma_grid_chi = None   # momentum exchange rate [GeV], per T
         self.gamma_grid_A = None
 
@@ -61,6 +118,17 @@ class PhaseSpaceState:
     # ------------------------------------------------------------------
     # Setup
     # ------------------------------------------------------------------
+    def zeroed_rate_grids(self):
+        """
+        Names of the rate grids currently falling back to their zero default.
+
+        Worth checking before a long run: a grid in this list contributes
+        nothing, which is intended for `gamma_grid_A` but would mean elastic
+        scattering is silently switched off if `gamma_grid_chi` appears here.
+        """
+        return tuple(name for name in self._RATE_GRIDS
+                     if getattr(self, "_" + name, None) is None)
+
     def set_initial_f(self, name, f_ptilde):
         """Set the initial distribution for one species, on the comoving grid."""
         f_ptilde = np.asarray(f_ptilde, dtype=float)

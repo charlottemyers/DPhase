@@ -341,13 +341,15 @@ def elastic_collision_rhs(T, y_flat, state, names, Np):
     has already been done to produce the gamma(T) coefficients (see
     `kernels.elastic_sm`).
 
-    Requires on `state`: `T_grid`, `gamma_grid_chi`, `gamma_grid_A`,
-    `gstar_func`.
+    Requires on `state`: `T_grid` and `gstar_func`. The rate grids
+    `gamma_grid_chi` and `gamma_grid_A` read as zeros when unassigned, so an
+    unpopulated grid makes this operator a no-op for that species rather than
+    an error.
 
     Returns
     -------
     df/dt for the whole state vector. Both chi and A are affected, though
-    `gamma_grid_A` is currently zero by construction -- A f -> A f is
+    `gamma_grid_A` is normally left at its zero default -- A f -> A f is
     suppressed by eps^4 and is neglected in `kernels.elastic_sm`.
     """
     T   = float(T)

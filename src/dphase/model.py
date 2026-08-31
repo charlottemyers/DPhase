@@ -15,7 +15,7 @@ def gD_of_alpha(alphaD):
 
 def sigma_s_xxAA(alphaD, mchi, mA, s):
     """XX -> AA s-dependent cross section.
-    From Coy, Kimus, Tytgat 2405.10792 eq. B.1.
+    From Aboubrahim, Feng, Nath, Wang 2103.15769 eqn. D.8
     """
     s = np.asarray(s, dtype=float)
     out = np.zeros_like(s)
@@ -32,11 +32,11 @@ def sigma_s_xxAA(alphaD, mchi, mA, s):
     den_B = (sv - 2*M2) - np.sqrt(beta_A2 * beta_chi2)
     logB = np.log(num_B / den_B)
 
-    term1 = (sv**2 + 4*m2*(sv - M2) + 4*M2**2 - 8*m2**2) \
+    term1 = (sv**2 + 4*m2*(sv - 2*M2) + 4*M2**2 - 8*m2**2) \
             / ((sv - 2*M2) * beta_chi2) * logB
     term2 = np.sqrt(beta_A2 / beta_chi2) \
             * (m2*sv + 2*M2**2 + 4*m2**2) / ((sv - 4*M2)*m2 + M2**2)
-    out[valid] = (4*np.pi*alphaD**2 / sv) * (term1 - term2)
+    out[valid] = (2*np.pi*alphaD**2 / sv) * (term1 - term2)
     return out
 
 
@@ -405,7 +405,46 @@ def M2_chi_f_avg(s, t, mchi, mf, mA, gD, epsilon, Qf):
     propagator  = (t - mA**2)**2
     return 2.0 * gD**2 * g_f**2 * numerator / propagator
 
+def M2_chi_t_averaged(s, mchi, mf, mA, gD, epsilon, Qf):
+    """
+    momentum-transfer averaged |M|^2, took from Binder et al. Eq.(7):
+        <|M|^2>_t = 1/(8*k_cm^4) * int_0^{4*k_cm^2} d(-t) * (-t) * |M|^2(s,t)
 
+    integration is over the physical t range [t_min, 0] with
+    t_min = -(4*k_cm^2), i.e. tau = -t in [0, 4*k_cm^2].
+
+    Parameters
+    ----------
+    s    : GeV^2]
+    mchi : chi mass [GeV]
+    mf   : SM fermion mass [GeV]
+    mA   : dark photon mass [GeV]
+    gD   : dark gauge coupling
+    epsilon : kinetic mixing
+    Qf   : fermion charge
+
+    Returns
+    -------
+    <|M|^2>_t [dimensionless]
+    """
+    lam   = (s - (mchi + mf)**2) * (s - (mchi - mf)**2)
+    if lam <= 0.0:
+        return 0.0
+    k2_cm = lam / (4.0 * s)
+    t_max = 4.0 * k2_cm     # maximum |t|
+
+    def integrand(tau):
+        # tau = -t, physical range tau in [0, t_max]
+        return tau * M2_chi_f_avg(s, -tau, mchi, mf, mA, gD, epsilon, Qf)
+
+    # break at propagator pole tau = mA^2 if inside range
+    points = [mA**2] if (0.0 < mA**2 < t_max) else []
+
+    result, _ = quad(integrand, 0.0, t_max,
+                     limit=150, points=points,
+                     epsabs=0.0, epsrel=1e-5)
+
+    return result / (8.0 * k2_cm**2)
 
 
 ################################

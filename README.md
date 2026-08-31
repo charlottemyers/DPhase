@@ -12,7 +12,7 @@ fermion dark matter candidate $\chi$ coupled to the Standard Model through a kin
   a comoving momentum grid, with no thermal-shape assumption on either species
 - Freeze-out, freeze-in, and the transitional regime are handled by the same solver — no switching between codes or approximations at the boundary.
 - Collision terms:
-  - $\chi\bar{\chi} \rightarrow f\bar{f}$: annihilation to all kinematically accessible SM fermions, with full $Z_D$--$Z$ mixing
+  - $\chi\bar{\chi} \rightarrow f\bar{f}$: annihilation to all kinematically accessible SM fermions, with full $Z_D$--Z mixing
   - $\chi\bar{\chi} \leftrightarrow Z_D Z_D$: hidden sector annihilation, as a full $2\rightarrow2$ redistribution operator
   - $\chi f \rightarrow \chi f$: elastic scattering off the SM bath, as a semi-relativistic Fokker--Planck operator
   - $\chi Z_D \rightarrow \chi Z_D$ dark Compton elastic scattering,
@@ -41,7 +41,7 @@ Requires Python 3.10+, NumPy 2.0+, SciPy, numba 0.61+, and mpmath.
 
 ## Quickstart
 
-*Notation note*: the dark photon is $Z_D$ throughout this document and `A` in the source, e.g. `species["A"]`, `K_grid_xxAA`.
+*Notation note*: the dark photon is $Z_D$ throughout this document and `A` in the source. `x` refers to $\chi$ and $\bar\chi$ e.g. `species["A"]`, `K_grid_xxAA`.
 
 <!-- The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run. -->
 

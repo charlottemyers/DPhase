@@ -60,14 +60,14 @@ def _sigma_s_xxAA_scalar(s, mchi, mA, alphaD):
     if den_B <= 0.0 or num_B <= 0.0:
         return 0.0
     logB = np.log(num_B / den_B)
-    term1 = (s * s + 4.0 * m2 * (s - M2) + 4.0 * M2 * M2 - 8.0 * m2 * m2) \
+    term1 = (s * s + 4.0 * m2 * (s - 2.0 * M2) + 4.0 * M2 * M2 - 8.0 * m2 * m2) \
             / (s_2M2 * beta_chi2) * logB
     den_T2 = (s - 4.0 * M2) * m2 + M2 * M2
     if den_T2 == 0.0:
         return 0.0
     term2 = np.sqrt(beta_A2 / beta_chi2) \
             * (m2 * s + 2.0 * M2 * M2 + 4.0 * m2 * m2) / den_T2
-    return (4.0 * np.pi * alphaD * alphaD / s) * (term1 - term2)
+    return (2.0 * np.pi * alphaD * alphaD / s) * (term1 - term2)
 
 
 

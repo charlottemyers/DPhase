@@ -8,7 +8,7 @@ and temperature is in GeV; cross sections are in GeV^-2.
 
 Electroweak conventions
 -----------------------
-Hypercharge is normalised so that Q = T3 + Y, with no factor of 1/2. T3 = 0 for all
+Hypercharge normalized so that Q = T3 + Y, with no factor of 1/2. T3 = 0 for all
 right-handed fields. `dphase.model.compute_couplings` and
 `dphase.model._chiral_couplings_ZD` both assume this convention.
 """
@@ -23,7 +23,7 @@ import numpy as np
 # the Friedmann equation as written in `cosmology.H_of_T`:
 #     H = sqrt(8 pi rho / 3) / MPL
 MPL = 1.2209e19
-MPL_REDUCED = MPL / np.sqrt(8.0 * np.pi)   # = 2.435e18, the reduced Planck mass
+MPL_REDUCED = MPL / np.sqrt(8.0 * np.pi)   # = 2.435e18, reduced Planck mass
 
 # ---------------------------------------------------------------------------
 # Electroweak sector
@@ -58,11 +58,11 @@ VAL_FLOOR = 1e-170       # positive floor, to keep divisions and logs finite
 GSTAR_S_DEFAULT = 90.0
 
 # ---------------------------------------------------------------------------
-# Standard Model fermions
+# SM fermions
 #
 # Keys:
-#   mass_GeV : current mass (MS-bar for quarks) [GeV]
-#   Nc       : colour multiplicity, 1 for leptons and 3 for quarks
+#   mass_GeV : mass [GeV]
+#   Nc       : color multiplicity, 1 for leptons and 3 for quarks
 #   Q        : electric charge, sign-preserving
 #   Q2       : Q**2, precomputed because it appears in most rates
 #   T3_L     : weak isospin of the left-handed field (T3_R = 0 always)

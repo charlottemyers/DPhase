@@ -69,7 +69,7 @@ class PhaseSpaceState:
 
     def __init__(self, grid: PhaseSpaceGrid, species: list[PhaseSpaceSpecies]):
         # --- set at construction ---
-        self.grid = grid # comoving momentum grid, ptilde = p / a(T)
+        self.grid = grid # comoving momentum grid, ptilde = p * a(T)
         self.species = {sp.name: sp for sp in species}
         self.f = {sp.name: np.zeros_like(grid.ptilde) for sp in species}
 

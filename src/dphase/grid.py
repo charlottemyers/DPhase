@@ -21,7 +21,7 @@ class PhaseSpaceSpecies:
     """
     One evolving species.
 
-    name            : key used to index `PhaseSpaceState.f`. The solver looks
+    name            : key used to index `PhaseSpaceState.f`. Solver looks
                       for the literal names "chi" and "A".
     mass_GeV        : rest mass [GeV]
     dof             : internal degrees of freedom g. Use 2 for chi
@@ -39,7 +39,7 @@ class PhaseSpaceSpecies:
 
 def log_bin_edges(p_centers):
     """
-    Bin edges and widths for a log-spaced grid given its centers.
+    Bin widths for a log-spaced grid given its centers.
 
     Interior edges are the geometric midpoints between neighboring centers.
     The two outermost edges are reflected outward so that the first and last
@@ -51,7 +51,6 @@ def log_bin_edges(p_centers):
 
     Returns
     -------
-    edges : log-space edges, shape (Np + 1,)
     dlogp : bin widths in log p, shape (Np,)
     """
     p = np.asarray(p_centers, dtype=float)
@@ -60,10 +59,14 @@ def log_bin_edges(p_centers):
 
     logp = np.log(p)
     edges = np.empty(logp.size + 1, dtype=float)
+
+    # element-wise averaging of neighboring log-centers
     edges[1:-1] = 0.5 * (logp[1:] + logp[:-1])
+
+    # (edges[1] - edges[0]) = how far the first bin extends below the first center, so reflect that distance outward
     edges[0] = logp[0] - (edges[1] - logp[0])
     edges[-1] = logp[-1] + (logp[-1] - edges[-2])
-    return edges, np.diff(edges)
+    return np.diff(edges)
 
 
 class PhaseSpaceGrid:
@@ -81,8 +84,8 @@ class PhaseSpaceGrid:
 
     Attributes
     ----------
-    ptilde     : bin centres, shape (Np,)
-    log_ptilde : log of the centres
+    ptilde     : bin centers, shape (Np,)
+    log_ptilde : log of the centers
     dlogp      : bin widths in log p, shape (Np,). Every phase-space integral
                  in the code is a sum over bins weighted by p^3 * dlogp.
     """
@@ -95,7 +98,7 @@ class PhaseSpaceGrid:
 
         self.ptilde = np.geomspace(ptilde_min, ptilde_max, Np)
         self.log_ptilde = np.log(self.ptilde)
-        _, self.dlogp = log_bin_edges(self.ptilde)
+        self.dlogp = log_bin_edges(self.ptilde)
         self.T_ref = float(T_ref)
         self._Np = Np
 
@@ -121,9 +124,9 @@ class PhaseSpaceGrid:
         """
         Physical momentum of each comoving bin at temperature T, p = ptilde / a.
 
-        The comoving centres are fixed for the whole run, so this is where the
+        The comoving centers are fixed for the whole run, so this is where the
         redshifting of momentum by the expansion enters. Every collision term
-        must be evaluated on these physical momenta, not on `self.ptilde`.
+        must be evaluated on these physical momenta, NOT on `self.ptilde`.
 
         Returns
         -------

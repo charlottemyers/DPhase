@@ -12,7 +12,7 @@ Framework:
 Assumptions:
   - SM bath is thermal at T
   - t-channel mediator is the dark photon A (for chi+f)
-  - FP valid: m_bath << m_scatter
+  - FP: m_bath < m_scatter
   - Fermi-Dirac for SM fermions (included exactly in integral)
 """
 
@@ -23,7 +23,7 @@ from dphase.model import gD_of_alpha, M2_chi_t_averaged
 
 
 # ============================================================
-# GAMMA(T) -- Binder et al. Eqs.(6)-(7)
+# GAMMA(T) -- arxiv:1706.07433 Eqs.(6)-(7)
 # ============================================================
 
 def gamma_single_fermion(T, m_scatter, mf, Qf, Nc, gD, epsilon, mA):
@@ -31,17 +31,17 @@ def gamma_single_fermion(T, m_scatter, mf, Qf, Nc, gD, epsilon, mA):
     Momentum exchange rate gamma(T) for one DM particle
     (mass m_scatter) scattering off one SM fermion species.
     took from Binder et al. Eq.(6), integrated by parts to avoid
-    differentiating the  noisy integrand:
+    differentiating noisy integrand:
 
-    gamma = 1/(48*pi^3 * g_scatter * m_scatter^3 * T)
+    gamma = 1/(48*pi^3 * m_scatter^3 * T)
                 * int_{mf}^{inf} domega * g_FD(omega)*(1-g_FD(omega))
-                        * k_cm^4(omega) * <|M|^2>_t(omega) * Nc
+                        * k_cm^4(omega) * <|M|^2>_t(omega) * (2 * Nc * 2)
 
     where omega is bath fermion energy,
     s = m_scatter^2 + mf^2 + 2*m_scatter*omega (scatter rest frame),
     k_cm^2 = kallen(s, m_scatter^2, mf^2)/(4s).
 
-    Valid for arbitrary chi temperature (no NR assumption on chi).
+    Valid for arbitrary chi temperature (no NR assumption).
     exact FD statistics for SM bath included.
 
     Params
@@ -59,8 +59,7 @@ def gamma_single_fermion(T, m_scatter, mf, Qf, Nc, gD, epsilon, mA):
     -------
     gamma [GeV]
     """
-    # 4 for Dirac fermion (2 spins * particle + antiparticle)
-    g_scatter = 4.0
+    N_ANTI = 2.0 # FERMIONS lists one entry per species; Binder sums f and fbar
 
     def integrand(omega):
         if omega < mf:
@@ -78,16 +77,17 @@ def gamma_single_fermion(T, m_scatter, mf, Qf, Nc, gD, epsilon, mA):
         g        = 1.0 / (np.exp(exponent) + 1.0)
         dg       = g * (1.0 - g) / T
 
-        # approximate t-averaged |M|^2 by evaluating at t = -k2_cm
-        M2avg = M2_chi_t_averaged(s, m_scatter, mf, mA, gD, epsilon, Qf)
-        return dg * k2_cm**2 * M2avg * Nc
+        # <|M|^2>_t: full t-integral over the physical range, Binder Eq.(7)
+        M2avg = M2_chi_t_averaged(s, m_scatter, mf, mA, gD, epsilon, Qf, Nc)
+        return dg * k2_cm**2 * M2avg * N_ANTI
 
     omega_max = mf + 30.0 * T # upper limit for omega integral, well into the Boltzmann tail
     result, _ = quad(integrand, mf, omega_max,
                      limit=150, epsabs=0.0, epsrel=1e-4)
 
-    prefactor = 1.0 / (48.0 * np.pi**3 * g_scatter * m_scatter**3)
+    prefactor = 1.0 / (48.0 * np.pi**3 * m_scatter**3)
     return prefactor * result
+
 
 
 def gamma_total(T, m_scatter, mA, gD, epsilon,
@@ -114,9 +114,6 @@ def gamma_total(T, m_scatter, mA, gD, epsilon,
         mf       = fdata["mass_GeV"]
         Nc       = fdata["Nc"]
         Qf       = abs(fdata["Q"])
-
-        if T < 0.05 * mf:
-            continue
         total += gamma_single_fermion(T, m_scatter, mf, Qf, Nc, gD, epsilon, mA)
 
     return total
@@ -144,8 +141,7 @@ def build_xfxf_kernels(T_grid, state):
         state.gamma_grid_chi = np.array([g['chi'] for g in gamma_grid])
 
     The 'A' entries are identically zero -- A f -> A f is an eps^4 effect and
-    is dropped -- and `state.gamma_grid_A` already defaults to zeros, so
-    assigning it is unnecessary.
+    is dropped; `state.gamma_grid_A` already defaults to zeros.
     """
 
     mchi    = state.species["chi"].mass_GeV
@@ -155,11 +151,11 @@ def build_xfxf_kernels(T_grid, state):
 
     gamma_grid = []
 
-    for i, T in enumerate(T_grid):
+    for _, T in enumerate(T_grid):
         T = float(T)
 
         g_chi = gamma_total(T, mchi, mA, gD, epsilon)
-        g_A   = 0.0  # A+f elastic scattering excluded: correct rate scales as eps^4, negligible
+        g_A   = 0.0  # A+f elastic scattering excluded
         gamma_grid.append({'chi': g_chi, 'A': g_A})
 
     return gamma_grid
@@ -170,12 +166,10 @@ def gamma_from_grid(T, T_grid, gamma_arr):
     Interpolate a precomputed gamma(T) grid, log-linearly in both T and gamma.
 
     Log-linear because gamma spans many decades across the temperature range,
-    so linear interpolation would badly misestimate it between grid points.
+    so linear interpolation would misestimate it between grid points.
 
     Returns exactly 0.0 for an identically-zero grid (the normal case for
-    gamma_A, and the state's default for any unassigned rate grid). That exact
-    zero matters: it lets `collisions.fokker_planck_dfdt` short-circuit instead
-    of evaluating the whole operator against the 1e-300 floor below.
+    gamma_A, and the state's default for any unassigned rate grid).
 
     Parameters
     ----------

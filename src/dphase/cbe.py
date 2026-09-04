@@ -1,8 +1,8 @@
 """
-Number-density (coupled Boltzmann equation) solver.
+Coupled Boltzmann equation (CBE) solver.
 
 Where `dphase.solver` evolves the full f(p, T), this module assumes both dark
-species keep a Maxwell-Boltzmann *shape* and tracks only three numbers:
+species keep a Maxwell-Boltzmann shape and tracks only three numbers:
 
     u = [ln n_chi, ln n_A, ln T_hidden]
 
@@ -74,7 +74,7 @@ def _R(z):
 
 def _dR_dz(z, rel_step=1e-6):
     """
-    dR/dz by centred difference. Enters the hidden-sector heat capacity in
+    dR/dz by centered difference. Enters the hidden-sector heat capacity in
     `dTh_dt_rel`; done numerically because the closed form needs K_0 as well
     and buys nothing at this accuracy.
     """

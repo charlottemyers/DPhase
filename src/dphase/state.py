@@ -23,11 +23,11 @@ class _ZeroDefaultRateGrid:
     """
     A per-temperature rate grid that reads as zeros until it is assigned.
 
-    Some rate contributions are identically zero for the dark photon model
-    A f -> A f elastic scattering, for instance, whose correct rate scales as
-    epsilon^4 and is dropped by `kernels.elastic_sm`. Rather than make the
-    caller build and assign an array of zeros by hand, those attributes default
-    to zeros here, so only the non-trivial grids need assigning.
+    Some rate contributions are identically zero for the DP model, i.e.
+    A f -> A f elastic scattering, whose rate scales as epsilon^4 and is
+    dropped by `kernels.elastic_sm`. Rather than make the caller build and
+    assign an array of zeros, those attributes default to zeros here,
+    so only the non-trivial grids need assigning.
     """
 
     def __set_name__(self, owner, name):

@@ -77,9 +77,7 @@ def sigma_s_xxff(
     s,
     m_initial,
     m_final,
-    Msq_const,
-    const_xsec=None,
-    params=None,
+    params
 ):
     s = np.asarray(s, dtype=float)
     sigma_out = np.zeros_like(s, dtype=float)
@@ -95,20 +93,6 @@ def sigma_s_xxff(
         return sigma_out
 
     sv = s[valid]
-
-    if const_xsec is not None:
-        sigma_out[valid] = const_xsec
-        return sigma_out
-
-    if params is None:
-        sigma_val = (
-            (1.0 / (16.0 * np.pi * sv))
-            * Msq_const
-            * np.sqrt(sv - 4.0 * m_final**2)
-            / np.sqrt(sv - 4.0 * m_initial**2)
-        )
-        sigma_out[valid] = sigma_val
-        return sigma_out
 
     couplings = params["couplings"]
     CA = couplings["C_A"]
@@ -405,13 +389,18 @@ def M2_chi_f_avg(s, t, mchi, mf, mA, gD, epsilon, Qf):
     propagator  = (t - mA**2)**2
     return 2.0 * gD**2 * g_f**2 * numerator / propagator
 
-def M2_chi_t_averaged(s, mchi, mf, mA, gD, epsilon, Qf):
+def M2_chi_t_averaged(s, mchi, mf, mA, gD, epsilon, Qf, Nc):
     """
     momentum-transfer averaged |M|^2, took from Binder et al. Eq.(7):
         <|M|^2>_t = 1/(8*k_cm^4) * int_0^{4*k_cm^2} d(-t) * (-t) * |M|^2(s,t)
 
     integration is over the physical t range [t_min, 0] with
     t_min = -(4*k_cm^2), i.e. tau = -t in [0, 4*k_cm^2].
+
+    averaged over 2 initial chi spins, SUMMED over the bath fermion's
+    2 spins and Nc colors. The antifermion is NOT included here: chi fbar
+    -> chi fbar is a distinct process, counted by the species sum in
+    `gamma_total`.
 
     Parameters
     ----------
@@ -444,7 +433,8 @@ def M2_chi_t_averaged(s, mchi, mf, mA, gD, epsilon, Qf):
                      limit=150, points=points,
                      epsabs=0.0, epsrel=1e-5)
 
-    return result / (8.0 * k2_cm**2)
+    g_chi = 2.0
+    return g_chi * Nc * result / (8.0 * k2_cm**2)
 
 
 ################################
@@ -523,7 +513,7 @@ def sigma_v_xxff(T, mchi, epsilon, alphaD, fermions_info, mA,
             s = rs*rs
             sig = sigma_s_xxff(
                 np.array([s]), m_initial=mchi, m_final=mf,
-                Msq_const=None, params=params)[0]
+                params=params)[0]
             if sig <= 0.0 or not np.isfinite(sig):
                 return 0.0
             return sig * (s - 4.0*mchi**2) * rs * kn(1, rs/T) * (2.0*rs)

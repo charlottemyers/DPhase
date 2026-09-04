@@ -7,7 +7,7 @@ reduces to
     df_s(ptilde_i) / dt = sum over collision operators,
 
 with no drift term: because ptilde = a(t) p is comoving, free expansion moves
-no probability between bins, so every right-hand side here is a genuine
+no probability between bins, so every right-hand side here is a pure
 collision effect.
 
 State vector layout
@@ -31,9 +31,9 @@ taken as **backward Euler**,
 
     f_next = f_current + dt * dfdt(T_next, f_next),
 
-solved for f_next with `scipy.optimize.root`. Backward Euler is L-stable, which is what matters here: the
-collision terms are very stiff near freeze-out, where rates exceed H by many orders of magnitude. An explicit
-step of the same size would be unusable.
+solved for f_next with `scipy.optimize.root`. Backward Euler is L-stable: collision terms are very stiff
+near freeze-out, where rates exceed H by many orders of magnitude. An explicit step of the same size would
+be unusable.
 
 """
 
@@ -50,13 +50,11 @@ from dphase.collisions import (
     xA_elastic_collision_rhs,
 )
 from dphase.cosmology import H_RD, t_of_T_RD
-from dphase.kernels import apply_xA_elastic_loss, gamma_from_grid
+from dphase.kernels import apply_xA_elastic_loss
 
 # Positive floor applied to f before forming loss rates
 _F_FLOOR = 1e-100
 
-# Index of the elastic (chi f -> chi f) entry in the tuple returned by `compute_dfdt`.
-_EL_TERM = 3
 
 
 def get_HS_loss_term(T, y_flat, state, names, Np):
@@ -65,7 +63,7 @@ def get_HS_loss_term(T, y_flat, state, names, Np):
 
     Used solely to measure how fast the hidden-sector operator is running, so
     that `solve_BE` can compare it against H and decide whether to cap it. The
-    gain term is deliberately excluded: gain and loss cancel to high precision
+    gain term is excluded: gain and loss cancel to high precision
     near equilibrium, so their sum is a poor estimate of the underlying rate.
 
     Parameters
@@ -93,7 +91,7 @@ def get_HS_loss_term(T, y_flat, state, names, Np):
     p = state.grid.p_phys(T, gstars_func=state.gstar_func)
     dlogp = state.grid.dlogp
 
-    # Nearest-neighbour lookup in T, not interpolation
+    # Nearest-neighbor lookup in T, not interpolation
     K_chi = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxAA)
     K_A = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_AAxx)
 
@@ -106,10 +104,11 @@ def get_dark_compton_loss_term(T, y_flat, state, names, Np):
     """
     Loss-only part of the chi A -> chi A dark Compton operator.
 
-    The dark-Compton counterpart of `get_HS_loss_term`, and used the same way:
+    Dark-Compton counterpart of `get_HS_loss_term`, and used the same way:
     to estimate the operator's rate at the peak of the distribution so it can
     be capped against Hubble. Reads the `K_loss` matrix stored alongside the
     event cache by `kernels.elastic_hidden.build_xA_elastic_gain_cache`.
+
     Returns
     -------
     (df_chi_loss, df_A_loss), each shape (Np,).
@@ -138,8 +137,7 @@ def solve_BE(state, T_grid,
              explicit_threshold=0.0,
              include_scatter=True,
              include_dark_compton=True,
-             lag_scatter_in_newton=True,
-             scatter_step_cap=0.2,
+             scatter_step_cap=0.5,
              probe_f_clip=1e120,
              decay_fermion_dist="MB",
              ann_fermion_dist="MB",
@@ -155,9 +153,7 @@ def solve_BE(state, T_grid,
     state : PhaseSpaceState
         Must be fully precomputed. Initial conditions are read from `state.f`.
     T_grid : array of temperatures [GeV], descending
-        The integration grid, prescribed and *not* adapted. Step size is
-        therefore entirely the caller's responsibility: too coarse near
-        freeze-out and the Newton solve will start failing. The returned
+        The integration grid, prescribed and not adapted. The returned
         snapshots are on this grid.
     Gamma_H_max : float
         Rate ceiling, in units of H. Any capped operator running faster than
@@ -172,34 +168,26 @@ def solve_BE(state, T_grid,
         Enable the chi f -> chi f Fokker-Planck operator. Requires `state.gamma_grid_*`.
     include_dark_compton : bool
         Enable the chi A -> chi A operator. Requires `state.gain_caches_xAxA`.
-    lag_scatter_in_newton : bool
-        Hold the elastic operator fixed at f_current during the Newton
-        iteration (IMEX) instead of solving it implicitly. Usually needed for
-        convergence.
     scatter_step_cap : float or None
         Maximum fractional change in any bin that the elastic operator alone
         may produce in one step: eta_sc = max |dt * dfdt_el| / max(|f|, floor).
         If exceeded, the operator is scaled by scatter_step_cap / eta_sc. This
-        is a *numerical* limiter distinct from the Gamma/H cap, and it applies
+        is a numerical limiter distinct from the Gamma/H cap, and it applies
         even when the physical rate is modest, because the Fokker-Planck second
-        derivative can be large where f varies steeply across neighbouring bins.
-        None or <= 0 disables it.
+        derivative can be large where f varies steeply across neighboring bins.
+        None disables it.
     probe_f_clip : float
         Upper clip applied to f before measuring the hidden-sector loss rate.
-        Guards the rate probe against an overflowing intermediate iterate; does
-        not affect the solution itself.
+        Guards the rate probe against an overflowing intermediate iterate.
     decay_fermion_dist, ann_fermion_dist : {"MB", "FD"}
         Statistics used for the SM fermions in the decay and annihilation
-        operators. "MB" (Maxwell-Boltzmann) drops Pauli blocking, which is a
-        good approximation for the non-relativistic bath and avoids the
-        blocking factors entirely; "FD" includes them.
+        operators. "MB" (Maxwell-Boltzmann) drops Pauli blocking; "FD" includes them.
 
     Returns
     -------
     T_grid : the input grid, returned unchanged for convenience
     snapshots : list of dicts {species_name: f}, one per grid point, on the
-        comoving momentum grid. Length len(T_grid) -- the initial condition is
-        element 0.
+        comoving momentum grid. Length len(T_grid); the initial condition is element 0.
 
     """
     Np = state.grid._Np
@@ -216,8 +204,8 @@ def solve_BE(state, T_grid,
         T_now = T_grid[i]
         T_next = T_grid[i + 1]
 
-        # Convert the temperature step into a time step. Both endpoints use
-        # their own g_*, so the step accounts for entropy release between them.
+        # Convert the temp. step into a time step. Both endpoints use
+        # their own g_*, so the step accounts for entropy change between them.
         g_now = state.gstar_func(T_now)
         g_next = state.gstar_func(T_next)
         dt = t_of_T_RD(T_next, g_next) - t_of_T_RD(T_now, g_now)
@@ -234,10 +222,10 @@ def solve_BE(state, T_grid,
                          sc_scale=1.0):
             """
             All active collision operators, returned separately rather than
-            summed so the caller can override one of them (see `_EL_TERM`).
+            summed.
 
             The `*_scale` arguments are the stiffness caps. Disabled operators
-            return exact zeros, so the sum is always well defined.
+            return exact zeros.
 
             Returns
             -------
@@ -278,8 +266,7 @@ def solve_BE(state, T_grid,
             of the distribution.
 
             The rate is measured where p^2 f is largest -- the peak of the
-            *number* density per log momentum, not of f itself, which for a
-            thermal shape peaks at p = 0 and carries no particles.
+            number density per log momentum (i.e. most occupied bin).
             Returns
             -------
             scale : multiplier in (0, 1] for the operator
@@ -300,14 +287,13 @@ def solve_BE(state, T_grid,
             f_peak_chi_v = np.abs(f_chi_v[peak_chi_v])
             f_peak_A_v = np.abs(f_A_v[peak_A_v])
 
-            # Per-particle rate = |df/dt| / f at the peak. Skipped where f has
-            # underflowed, since the ratio there is noise.
+            # Per-particle rate = |df/dt| / f at the peak occupation. Skipped where f has underflowed.
             g_chi_v = (np.abs(loss_chi_dc[peak_chi_v]) / f_peak_chi_v
                        if f_peak_chi_v > _F_FLOOR else 0.0)
             g_A_v = (np.abs(loss_A_dc[peak_A_v]) / f_peak_A_v
                      if f_peak_A_v > _F_FLOOR else 0.0)
 
-            # Cap on whichever species is running faster.
+            # cap on whichever species is running faster
             gamma_dc = max(g_chi_v, g_A_v)
             ratio_dc = (gamma_dc / H if max(f_peak_chi_v, f_peak_A_v) > _F_FLOOR
                         else 0.0)
@@ -318,45 +304,26 @@ def solve_BE(state, T_grid,
             """
             Cap factor for the elastic (chi f -> chi f) operator.
 
-            Two independent limiters, of which the stricter wins:
-
-            1. Physical, Gamma/H: uses the precomputed gamma(T) directly, since
-               for Fokker-Planck the momentum exchange rate *is* the operator's
-               coefficient.
-            2. Numerical, step impact: bounds the fractional change this
-               operator alone may make to any bin over dt. The Fokker-Planck
-               operator differentiates f twice in p, so a steep feature between
-               adjacent bins can produce a huge df/dt even at a modest physical
-               rate.
+            Bound on the step impact: bounds the fractional change this
+            operator alone may make to any bin over dt. The Fokker-Planck
+            operator differentiates f twice in p, so a steep feature between
+            adjacent bins can produce a huge df/dt even at a modest rate.
 
             Returns
             -------
             sc_scale : multiplier in (0, 1] for the operator
-            ratio_sc : measured Gamma/H (0 if the gamma grids are all zero)
             eta_sc   : measured step impact, for the progress print
             """
             if not scatter_enabled:
                 return 1.0, 0.0, 0.0
 
-            # --- limiter 1: physical rate against Hubble ---
-            # Unassigned rate grids read as zeros (see PhaseSpaceState), so no
-            # presence check is needed: an absent grid contributes gamma = 0
-            # and leaves this cap inactive. If scattering looks inert, check
-            # state.zeroed_rate_grids().
-            gamma_sc = max(
-                gamma_from_grid(T_eval, state.T_grid, state.gamma_grid_chi),
-                gamma_from_grid(T_eval, state.T_grid, state.gamma_grid_A),
-            )
-            ratio_sc = gamma_sc / H
-            scale_phys = (Gamma_H_max / ratio_sc
-                          if ratio_sc > Gamma_H_max else 1.0)
-
-            # --- limiter 2: fractional step impact ---
+            # ---  fractional step impact ---
             dfdt_el = elastic_collision_rhs(T_eval, f_eval, state, names, Np)
             dfdt_el = np.where(np.isfinite(dfdt_el), dfdt_el, 0.0)
             denom = np.maximum(np.abs(f_eval), 1e-40)
             # A bin with f at the floor and a large dfdt gives a huge ratio;
             # that is the intended signal, so let it overflow to inf quietly
+
             with np.errstate(over='ignore', divide='ignore', invalid='ignore'):
                 step_vec = (np.abs(dt) * np.abs(dfdt_el)) / denom
             step_vec = np.where(np.isfinite(step_vec), step_vec, np.inf)
@@ -367,17 +334,18 @@ def solve_BE(state, T_grid,
                 if np.isfinite(eta_sc) and eta_sc > scatter_step_cap:
                     scale_num = scatter_step_cap / eta_sc
 
-            return min(scale_phys, scale_num), ratio_sc, eta_sc
+            return scale_num, eta_sc
 
         # ==================================================================
         # EXPLICIT branch -- opt-in fast path, see `explicit_threshold`
+        # turned off by default. This is a cheap forward Euler step, which is unstable
         # ==================================================================
         if f_max < explicit_threshold:
             # Midpoint in log T, consistent with the geometric spacing the
             # temperature grid is normally built with.
             T_mid = np.sqrt(T_now * T_next)
             dc_scale, _ = compute_dc_scale(T_mid, f_current)
-            sc_scale, _, _ = compute_sc_scale(T_mid, f_current)
+            sc_scale, _ = compute_sc_scale(T_mid, f_current)
             terms = compute_dfdt(T_mid, f_current, hs_scale=1.0,
                                  dc_scale=dc_scale, sc_scale=sc_scale)
             # Clamp at 0: f is a phase-space density and an explicit step can
@@ -419,43 +387,38 @@ def solve_BE(state, T_grid,
                         if eff_ratio > Gamma_H_max else 1.0)
 
             dc_scale, dc_ratio = compute_dc_scale(T_next, f_current)
-            sc_scale, sc_ratio, sc_step_ratio = compute_sc_scale(T_next,
-                                                                 f_current)
-
-            # ---- optionally freeze elastic term (IMEX) ----
-            if lag_scatter_in_newton and scatter_enabled:
-                dfdt_el_lag = sc_scale * elastic_collision_rhs(
-                    T_next, f_current, state, names, Np)
-            else:
-                dfdt_el_lag = None
+            sc_scale, sc_step_ratio = compute_sc_scale(T_next,
+                                                        f_current)
 
             # ---- residual normalisation ----
-            # `root`'s tolerance is absolute, but f spans hundreds of decades
-            # across the grid, so an unscaled residual would be dominated
-            # entirely by the largest bin and the tail would go unconverged.
+            # f spans hundreds of decades across the grid, so an unscaled residual
+            # would be dominated by the largest bin and the tail would go unconverged.
+
+            # estimate dfdt at the current f, to scale the residual per bin by the expected change.
             terms_est = compute_dfdt(T_next, f_current, hs_scale=hs_scale,
                                      dc_scale=dc_scale, sc_scale=sc_scale)
-            if dfdt_el_lag is not None:
-                terms_est = list(terms_est)
-                terms_est[_EL_TERM] = dfdt_el_lag
             dfdt_total_est = sum(terms_est)
             res_scale = np.maximum(np.abs(f_current),
                                    np.abs(dt * dfdt_total_est))
             res_scale = np.maximum(res_scale, 1e-50)   # never divide by zero
 
             def residual(f_next):
-                """Backward-Euler residual, normalised per bin by res_scale."""
+                """Backward-Euler residual, normalized per bin by res_scale."""
                 terms = compute_dfdt(T_next, f_next, hs_scale=hs_scale,
                                      dc_scale=dc_scale, sc_scale=sc_scale)
-                if dfdt_el_lag is not None:
-                    terms = list(terms)
-                    terms[_EL_TERM] = dfdt_el_lag
+
+                # sum the contributions from all collision terms
                 dfdt_total = sum(terms)
+
+                # normalise the residual by the expected change per bin
                 return (f_next - f_current - dt * dfdt_total) / res_scale
 
             # 'hybr' is a Powell hybrid method with a numerically estimated
-            # Jacobian -- the collision operators have no analytic Jacobian
-            # available, so each iteration costs ~n_species*Np extra operator evaluations
+            # Jacobian; collision operators have no analytic Jacobian
+            # available, so each iteration costs ~n_species*Np extra operator evaluation
+
+            # want to find next such that residual(next) = 0, i.e. f_current + dt * dfdt_total = f_next
+            # result gives f_next such that the backward Euler equation is satisfied.
             result = root(residual, f_current, method='hybr',
                           tol=1e-10, options={'maxfev': 5000})
 
@@ -465,14 +428,11 @@ def solve_BE(state, T_grid,
                       f"falling back to explicit")
                 terms = compute_dfdt(T_next, f_current, hs_scale=hs_scale,
                                      dc_scale=dc_scale, sc_scale=sc_scale)
-                if dfdt_el_lag is not None:
-                    terms = list(terms)
-                    terms[_EL_TERM] = dfdt_el_lag
                 f_next = f_current + dt * sum(terms)
             else:
                 f_next = result.x
 
-            # Enforce f >= 0. Newton has no such constraint built in.
+            # Enforce f >= 0
             f_next = np.maximum(f_next, 0.0)
 
             if i % 10 == 0:
@@ -480,7 +440,7 @@ def solve_BE(state, T_grid,
                 # operator is being capped.
                 print(f"Step {i}/{len(T_grid)-1}: T={T_next:.3f} GeV "
                       f"Γ_HS/H={eff_ratio:.1e} hs_scale={hs_scale:.2e} "
-                      f"Γ_sc/H={sc_ratio:.1e} η_sc={sc_step_ratio:.1e} "
+                      f"η_sc={sc_step_ratio:.1e} "
                       f"sc_scale={sc_scale:.2e} "
                       f"Γ_dc/H={dc_ratio:.1e} dc_scale={dc_scale:.2e} "
                       f"|f|={np.max(f_next):.2e}")

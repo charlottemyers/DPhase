@@ -16,8 +16,8 @@ term splits into two pieces that need different treatment:
 
 Everything in this module runs once, before the solve, on a temperature grid;
 `dphase.collisions` then looks up the nearest entry each step and contracts it
-against the current distribution. The two `apply_*` / `*_from_grid_*` helpers
-at the bottom are the exceptionl; they run every step.
+against the current distribution. Only the two `apply_*` / `*_from_grid_*` helpers
+run every step.
 """
 
 import numpy as np
@@ -49,10 +49,9 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
     m_out   : mass of the outgoing particles [GeV]. Enters only through the
               threshold and, for `reverse=True`, the crossing factor.
     alphaD  : dark fine structure constant
-    Nmu     : Gauss-Legendre nodes for the angular integral
+    Nmu     : GL nodes for the angular integral
     reverse : False for chi chibar -> A A, using sigma_xxAA(s) directly.
-              True for A A -> chi chibar, obtained from the same sigma by
-              crossing (see below).
+              True for A A -> chi chibar, obtained by crossing (see below).
 
     Returns
     -------
@@ -72,9 +71,7 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
     """
     p = np.asarray(p, dtype=float)
 
-    # Incoming legs both have mass m_in, so E, s and the flux factor below all
-    # use m_in -- this is the only thing that distinguishes the two directions
-    # kinematically.
+    # Incoming legs both have mass m_in, so E, s and the flux factor below all use m_in .
     E = np.sqrt(p**2 + m_in**2)
 
     mu_nodes, mu_w = np.polynomial.legendre.leggauss(Nmu)
@@ -84,24 +81,24 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
     E2 = E[None, :, None]
     s = 2.0 * m_in**2 + 2.0 * (E1 * E2 - p1 * p2 * mu_nodes[None, None, :])
 
-    # Both the incoming pair and the outgoing pair must be on shell.
+    # Both the incoming pair and the outgoing pair must be on shell. With
+    # forward it is the incoming-pair bound (s >= 4 m_in^2,automatic),
+    # reverse it is the genuine chi chibar production threshold and the outgoing
+    # constraint is the one doing the work.
     threshold = max(4.0 * m_in**2, 4.0 * m_out**2)
-    valid = (s > threshold) if reverse else (s >= threshold)
+    valid = s >= threshold
 
     s_v = s[valid]
     E1_full = np.broadcast_to(E1, s.shape)
     E2_full = np.broadcast_to(E2, s.shape)
 
-    # sigma_xxAA(s) from Coy-Kimus-Tytgat 2405.10792 Eq. (B.1). Already carries
-    # the (1/16 pi s) beta_out/beta_in prefactor.
     mchi, mA = (m_out, m_in) if reverse else (m_in, m_out)
     sigma = np.zeros_like(s)
     sigma[valid] = sigma_s_xxAA(alphaD, mchi, mA, s_v)
 
     if reverse:
         # Cross to A A -> chi chibar. lambda(s, m^2, m^2) = s(s - 4m^2) is the
-        # equal-mass Kallen function; the ratio converts the flux factor from
-        # the chi chibar initial state to the A A one.
+        # equal-mass Kallen function
         lam_in = s_v**2 - 4.0 * s_v * m_in**2       # A A
         lam_out = s_v**2 - 4.0 * s_v * m_out**2     # chi chibar
         sigma[valid] *= _AAXX_DOF_RATIO * (lam_out / lam_in)
@@ -112,7 +109,7 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
 
     integrand = np.zeros_like(s)
     # The 0.5 is the d\mu/2 angular normalisation, folded in here so the outer
-    # reduction is a plain tensordot against the Gauss-Legendre weights.
+    # reduction is just a tensordot against the GL weights.
     integrand[valid] = sigma[valid] * v_mol * 0.5
 
     return np.tensordot(integrand, mu_w, axes=([2], [0]))
@@ -125,9 +122,8 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
 def build_annihilation_loss_kernels(T_span, state, mchi, mA, direction):
     """
     Tabulate an annihilation loss kernel on a temperature grid.
-
     One kernel per temperature, because the comoving grid maps to different
-    physical momenta at each T -- see `dphase.grid`.
+    physical momenta at each T.
 
     Parameters
     ----------
@@ -165,20 +161,20 @@ def build_annihilation_loss_kernels(T_span, state, mchi, mA, direction):
 def _build_gain_cache_inner_bilinear(
     p_out, logp_out, p_in, E_in, PS_in, invW_out,
     mu_in, w_in, mu_out, wP_out,
-    m_out, m_in, alphaD, use_symmetry, yield_out, reverse,
+    m_out, m_in, alphaD, yield_out, reverse,
 ):
     """
     Build the gain (deposition) event list for chi chibar <-> A A.
 
-    Where a loss term only needs sigma(s), a gain term has to know *where in
-    momentum* the products land. This routine walks every quadrature point of
+    Where a loss term only needs sigma(s), a gain term has to know where in
+    momentum the products land. This routine walks every quadrature point of
 
         (incoming bin k) x (incoming bin l) x (mu_in) x (mu_out)
 
     and, for each, boosts the outgoing particle from the CM frame back to the
-    cosmological frame to get its momentum p1. Because p1 almost never lands on
+    cosmological frame to get its momentum p1. Because p1 rarely lands on
     a grid point, the event's weight is split linearly in log p between the two
-    bracketing bins -- hence "bilinear". The result is a flat event list rather
+    bracketing bins (hence "bilinear"). The result is a flat event list rather
     than a matrix, since the (k, l) -> i mapping is sparse and irregular.
 
     Applied later by `apply_gain_cache` as
@@ -200,9 +196,6 @@ def _build_gain_cache_inner_bilinear(
                       angle of the outgoing particle
     m_out, m_in     : outgoing and incoming masses [GeV]
     alphaD          : dark fine structure constant
-    use_symmetry    : if True, loop only over l >= k and double the
-                      off-diagonal weight. Halves the work, valid because the
-                      integrand is symmetric under k <-> l.
     yield_out       : number of the tracked species produced per reaction
                       (2 for the two A' from chi chibar -> A A, 1 otherwise)
     reverse         : False for chi chibar -> A A; True for A A -> chi chibar,
@@ -218,9 +211,8 @@ def _build_gain_cache_inner_bilinear(
     Nmu_in = mu_in.shape[0]
     Nmu_out = mu_out.shape[0]
 
-    # Upper bound on the event count: two deposits (i_lo, i_hi) per quadrature
-    # point. Allocated once and sliced down at the end, since numba cannot grow
-    # a list cheaply inside an njit loop.
+    # Upper bound on the event count: two deposits (i_lo, i_hi) per quadrature point.
+    # Allocated once and sliced down at the end
     max_events = 2 * Np_in * Np_in * Nmu_in * Nmu_out
     idx_out_buf = np.empty(max_events, dtype=np.int64)
     k_buf = np.empty(max_events, dtype=np.int64)
@@ -230,19 +222,16 @@ def _build_gain_cache_inner_bilinear(
 
     m_in_sq = m_in * m_in
     m_out_sq = m_out * m_out
-    thresh = 4.0 * m_out_sq          # outgoing pair must be on shell
+    thresh = 4.0 * m_out_sq          # outgoing pair on shell
 
     for k in range(Np_in):
         p3 = p_in[k]
         E3 = E_in[k]
-        l_start = k if use_symmetry else 0
+        l_start = 0
         for l in range(l_start, Np_in):
             p4 = p_in[l]
             E4 = E_in[l]
-
-            # Off-diagonal pairs stand in for both (k, l) and (l, k).
-            sym = 2.0 if (use_symmetry and l != k) else 1.0
-            pair_pref = sym * PS_in[k] * PS_in[l]
+            pair_pref =  PS_in[k] * PS_in[l]
 
             E3E4 = E3 * E4
             p3p4 = p3 * p4
@@ -279,7 +268,9 @@ def _build_gain_cache_inner_bilinear(
                     # divide by lam_in: it was checked > 0 above.
                     sig = _AAXX_DOF_RATIO * (lam_out / lam_in) * sig
 
-                rate_base = 0.5 * wmu * vM * sig * pair_pref
+
+                # note: the 0.5 factor for dmu_in/2 normalization is already included in wmu (see gain_cache_common_setup)
+                rate_base = wmu * vM * sig * pair_pref
 
                 # --- outgoing kinematics in the CM frame ---
                 E_star = 0.5 * np.sqrt(s)
@@ -308,17 +299,20 @@ def _build_gain_cache_inner_bilinear(
                         continue
                     p1 = np.sqrt(p1sq)
 
-                    # Products landing outside the grid are dropped.
+                    # products landing outside the grid are dropped.
                     if p1 <= p_out[0] or p1 >= p_out[-1]:
                         continue
 
                     # Bracketing bins, then linear interpolation in log p.
+                    # get i_lo and i_hi: the indices of the lower and upper bracketing bins for p1
                     i_lo = np.searchsorted(p_out, p1) - 1
                     if i_lo < 0:
                         i_lo = 0
                     if i_lo > Np_out - 2:
                         i_lo = Np_out - 2
                     i_hi = i_lo + 1
+
+                    # weight split between the nearest 2 bins
                     alpha = (np.log(p1) - logp_out[i_lo]) / \
                             (logp_out[i_hi] - logp_out[i_lo])
                     if alpha < 0.0:
@@ -326,14 +320,22 @@ def _build_gain_cache_inner_bilinear(
                     elif alpha > 1.0:
                         alpha = 1.0
 
+                    # deposit the event, using yield_out = 2 for the two DPs
+                    # note: wP_out already includes the 0.5 factor for dmu_out/2 normalization
                     rate_event = rate_base * wP_out[mj] * yield_out
 
                     # Split the deposit between the two bracketing bins. The
                     # invW_out factor converts a rate into a df/dt per bin.
+
+                    # shape of idx_out_buf = (N_events,), where N_events is the total number of events accumulated so far
+                    # populate buffers for the lower bracketing bin for the current event
+                    # n tracks the total number of events accumulated so far; idx_out_buf tracks the index to the momentum grid of the outgoing particle for each event
                     idx_out_buf[n] = i_lo
                     k_buf[n] = k
                     l_buf[n] = l
                     w_buf[n] = (1.0 - alpha) * rate_event * invW_out[i_lo]
+
+                    ### now populate the upper bracketing bin for the current event
                     n += 1
                     idx_out_buf[n] = i_hi
                     k_buf[n] = k
@@ -348,7 +350,7 @@ def build_gain_cache_xxAA(
     p_out, p_in, dlogp_in,
     m_chi, m_A, alphaD,
     Nmu_in=4, Nmu_out=4,
-    use_symmetry=True, yield_out=1.0,
+    yield_out=1.0,
 ):
     """
     Gain cache for the A' produced by chi chibar -> A' A'.
@@ -366,8 +368,6 @@ def build_gain_cache_xxAA(
     alphaD   : dark fine structure constant
     Nmu_in, Nmu_out : Gauss-Legendre nodes for the incoming-pair angle and the
                CM emission angle
-    use_symmetry : exploit k <-> l symmetry to halve the work. Verified to
-               agree with the direct sum to ~2e-15.
     yield_out : products of the tracked species per reaction -- 2 here, since
                chi chibar -> A' A' makes two dark photons.
 
@@ -384,7 +384,7 @@ def build_gain_cache_xxAA(
         p_out, logp_out, p_in, E_in, PS_in, invW_out,
         mu_in_n, w_in_n, mu_out_n, wP_out,
         float(m_A), float(m_chi), float(alphaD),
-        bool(use_symmetry), float(yield_out), False,
+        float(yield_out), False,
     )
     if idx_out.size == 0:
         return dict(
@@ -405,7 +405,7 @@ def build_gain_cache_AAxx(
     p_out, p_in, dlogp_in,
     m_chi, m_A, alphaD,
     Nmu_in=4, Nmu_out=4,
-    use_symmetry=True, yield_out=1.0,
+    yield_out=1.0,
 ):
     """
     Gain cache for the chi produced by A' A' -> chi chibar.
@@ -426,7 +426,7 @@ def build_gain_cache_AAxx(
         p_out, logp_out, p_in, E_in, PS_in, invW_out,
         mu_in_n, w_in_n, mu_out_n, wP_out,
         float(m_chi), float(m_A), float(alphaD),
-        bool(use_symmetry), float(yield_out), True,
+        float(yield_out), True,
     )
 
 
@@ -439,6 +439,7 @@ def build_gain_cache_AAxx(
             p_out=p_out, p_in=p_in,
         )
 
+    # each array is shape (N_events,), with N_events = 2 * Np_in^2 * Nmu_in * Nmu_out
     return dict(
         idx_out=idx_out, k_idx=k_idx, l_idx=l_idx, w_base=w_base,
         p_out=p_out, p_in=p_in,
@@ -452,7 +453,6 @@ def build_fixed_grid_gain_caches_xxAA(
     yield_out_chi=1.0,
     yield_out_A=2.0,
     Nmu_in=4, Nmu_out=4,
-    use_symmetry=True,
 ):
     """
     Build both gain caches for one momentum grid, in one call.
@@ -460,8 +460,8 @@ def build_fixed_grid_gain_caches_xxAA(
     A single temperature needs two caches, because each species gains from the
     *other* one annihilating:
 
-        cache_chi_from_AA : chi deposited by A' A' -> chi chibar  (reverse)
-        cache_A_from_xx   : A' deposited by chi chibar -> A' A'   (forward)
+        cache_chi_from_AA : chi deposited by Z_D Z_D -> chi chibar   (reverse)
+        cache_A_from_xx   : Z_D deposited by chi chibar -> Z_D Z_D   (forward)
 
     Note the crossing in the names: the chi cache is built by the AAxx builder.
 
@@ -471,9 +471,8 @@ def build_fixed_grid_gain_caches_xxAA(
     m_chi, m_A, alphaD : model parameters
     yield_out_chi, yield_out_A : products per reaction, 1 and 2 respectively.
         These must stay consistent with the degeneracy prefactors in
-        `collisions.AA_chichi_collision_rhs`, which are derived assuming
-        exactly these values.
-    Nmu_in, Nmu_out, use_symmetry : passed through to the builders
+        `collisions.AA_chichi_collision_rhs`
+    Nmu_in, Nmu_out: passed through to the builders
 
     Returns
     -------
@@ -482,19 +481,22 @@ def build_fixed_grid_gain_caches_xxAA(
     them, but they make a pickled cache self-describing.
     """
     p_cache = np.asarray(p_cache, float)
-    _, dlogp_cache = log_bin_edges(p_cache)
+    dlogp_cache = log_bin_edges(p_cache)
 
+    # gain of chi
     cache_chi_from_AA = build_gain_cache_AAxx(
         p_out=p_cache, p_in=p_cache, dlogp_in=dlogp_cache,
         m_chi=m_chi, m_A=m_A, alphaD=alphaD,
         Nmu_in=Nmu_in, Nmu_out=Nmu_out,
-        use_symmetry=use_symmetry, yield_out=yield_out_chi,
+        yield_out=yield_out_chi,
     )
+
+    # gain of A
     cache_A_from_xx = build_gain_cache_xxAA(
         p_out=p_cache, p_in=p_cache, dlogp_in=dlogp_cache,
         m_chi=m_chi, m_A=m_A, alphaD=alphaD,
         Nmu_in=Nmu_in, Nmu_out=Nmu_out,
-        use_symmetry=use_symmetry, yield_out=yield_out_A,
+        yield_out=yield_out_A,
     )
     return dict(
         p_cache=p_cache,
@@ -538,7 +540,6 @@ def build_annihilation_gain_caches(T_span, state):
             alphaD=state.alphaD,
             Nmu_in=state.Nmu,
             Nmu_out=state.Nmu,
-            use_symmetry=False,
             yield_out_chi=1.0,
             yield_out_A=2.0,
         )
@@ -554,23 +555,26 @@ def _gain_cache_common_setup(p_out, p_in, dlogp_in, m_in, Nmu_in, Nmu_out):
 
     PS_in is the incoming phase-space measure p^3 dlogp / (2 pi^2); invW_out is
     the reciprocal of the same measure on the outgoing grid, pre-inverted
-    because the event loop needs it per deposit and division is not free.
+    because the event loop needs it per deposit.
     """
     p_out = np.ascontiguousarray(p_out, dtype=np.float64)
     p_in = np.ascontiguousarray(p_in, dtype=np.float64)
     dlogp_in = np.ascontiguousarray(dlogp_in, dtype=np.float64)
 
     E_in = np.sqrt(p_in ** 2 + m_in ** 2)
-    PS_in = (1.0 / (2.0 * np.pi ** 2)) * p_in ** 3 * dlogp_in
+    PS_in = (1.0 / (2.0 * np.pi ** 2)) * p_in ** 3  * dlogp_in
     W_out = (1.0 / (2.0 * np.pi ** 2)) * p_out ** 3 * dlogp_in
     invW_out = 1.0 / np.maximum(W_out, 1e-300)
 
+    # --- Gauss-Legendre quadrature nodes and weights ---
     mu_in_n, w_in_n = np.polynomial.legendre.leggauss(Nmu_in)
     mu_out_n, w_out_n = np.polynomial.legendre.leggauss(Nmu_out)
-    mu_in_n = np.ascontiguousarray(mu_in_n, dtype=np.float64)
-    w_in_n = np.ascontiguousarray(w_in_n, dtype=np.float64)
+    mu_in_n  = np.ascontiguousarray(mu_in_n, dtype=np.float64)
     mu_out_n = np.ascontiguousarray(mu_out_n, dtype=np.float64)
-    wP_out = np.ascontiguousarray(0.5 * w_out_n, dtype=np.float64)
+
+    # --- fold in the 0.5 factor for dmu/2 normalization ---
+    w_in_n = np.ascontiguousarray(0.5 * w_in_n, dtype=np.float64)
+    wP_out = np.ascontiguousarray(0.5 * w_out_n, dtype=np.float64) # 0.5 for the dmu/2 normalisation folded in
 
     return p_out, p_in, E_in, PS_in, invW_out, mu_in_n, w_in_n, mu_out_n, wP_out
 
@@ -578,7 +582,7 @@ def _gain_cache_common_setup(p_out, p_in, dlogp_in, m_in, Nmu_in, Nmu_out):
 
 
 # ===========================================================================
-# Run-time helpers -- these are called every solver step, not once up front
+# Run-time helpers -- these are called every solver step
 # ===========================================================================
 
 @jit(nopython=True, cache=True)
@@ -590,11 +594,15 @@ def _apply_gain_numba(k_idx, l_idx, w_base, idx_out, f_in, Nout):
 
     Bilinear in f because two particles annihilate, and both legs index the
     same distribution since the incoming pair is one species. Compiled: this
-    runs once per species per Newton iteration, over ~10^4-10^6 events, and is
-    a hot loop for the whole solve.
+    runs once per species per Newton iteration
     """
     result = np.zeros(Nout)
+
+    # for each event in the event list, add its contribution to the result array
+    # recall: k_idx has shape (N_events,), same as l_idx, idx_out, w_base
     for i in range(len(k_idx)):
+        # idx_out[i] is the index in the momentum grid of the outgoing particle,
+        # so we deposit the event into this corresponding momentum bin
         result[idx_out[i]] += w_base[i] * f_in[k_idx[i]] * f_in[l_idx[i]]
     return result
 
@@ -613,10 +621,11 @@ def apply_gain_cache(cache, f_in):
     the gain half only, and the caller adds the loss term separately.
     """
     f_in = np.asarray(f_in, dtype=np.float64)
-    Nout = cache["p_out"].shape[0]
+    Nout = cache["p_out"].shape[0] # Nout = number of outgoing momentum grid points
     if cache["w_base"].size == 0:
         return np.zeros(Nout, dtype=np.float64)
 
+    # each cache["..."] has shape (N_events,)
     return _apply_gain_numba(
             cache["k_idx"], cache["l_idx"], cache["w_base"],
             cache["idx_out"], f_in, Nout
@@ -629,7 +638,7 @@ def gain_cache_from_grid_nearest(T, T_grid, cache_grid):
     """
     Pick the tabulated gain cache closest to T.
 
-    Nearest-neighbour rather than interpolation, matching
+    Nearest-neighbor rather than interpolation, matching
     `annihilation_sm.kernel_from_grid_nearest`: the caches are sparse event
     lists with different lengths at different temperatures, so they cannot be
     blended. Accuracy therefore comes from tabulating T_span finely enough.

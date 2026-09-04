@@ -6,8 +6,7 @@ Only a loss kernel is needed here, unlike the dark-sector channel: the SM fermio
 in equilibrium at T, so detailed balance fixes the inverse reaction and no gain cache is required.
 
 Every kinematically accessible SM fermion contributes, summed with its color
-multiplicity, and each one gets its own Z_D-Z mixed couplings from
-`model.compute_couplings`.
+multiplicity, and each one gets its own Z_D-Z mixed couplings from `model.compute_couplings`.
 """
 
 import numpy as np
@@ -23,8 +22,7 @@ def kernel_xxff(
     epsilon,
     alphaD,
     fermions_info,
-    Nmu=16,
-    const_xsec=None,
+    Nmu=16
 ):
     """
     Build the annihilation loss kernel
@@ -33,28 +31,23 @@ def kernel_xxff(
 
     where bins i and j hold the two incoming chi and theta is the angle between
     their momenta. The sum runs over every SM fermion the pair can produce,
-    each with its own A'-Z mixed couplings and full s-dependent cross section
+    each with its own Z_D-Z mixed couplings and full s-dependent cross section
     (no threshold approximation).
 
     Fully vectorized: the angular integral is carried as a third axis and
-    reduced by a single tensordot at the end. Note the intermediate arrays are
-    (Np, Np, Nmu), so memory grows quadratically in the grid size.
+    reduced by a single tensordot at the end.
 
     Parameters
     ----------
     p             : physical momenta [GeV], shape (Np,)
     m_initial     : mass of the annihilating pair, i.e. m_chi [GeV]
-    m_mediator    : dark photon mass [GeV], entering the mixing and the
-                    propagator
+    m_mediator    : dark photon mass [GeV], entering the mixing and the propagator
     epsilon       : kinetic mixing
     alphaD        : dark fine structure constant
     fermions_info : dict of SM fermion properties, normally
                     `constants.FERMIONS`. Pass `MASSIVE_FERMIONS` to drop the
                     neutrino channels.
     Nmu           : Gauss-Legendre nodes for the angular integral
-    const_xsec    : if given, bypass the physics and return a constant kernel.
-                    Useful for testing the solver against an analytic case;
-                    nothing in the package passes it.
 
     Returns
     -------
@@ -62,10 +55,6 @@ def kernel_xxff(
     """
     p = np.asarray(p, dtype=float)
     E = np.sqrt(p**2 + m_initial**2)
-    Np = p.size
-
-    if const_xsec is not None:
-        return const_xsec * np.ones((Np, Np), dtype=float)
 
     mu_nodes, mu_w = np.polynomial.legendre.leggauss(Nmu)
 
@@ -114,12 +103,10 @@ def kernel_xxff(
             s,
             m_initial=m_initial,
             m_final=mf,
-            Msq_const=None,
-            const_xsec=None,
             params=params,
         )
 
-        # Colour multiplicity applied here, not inside matrix element.
+        # color multiplicity applied here.
         sigma_sum += Nc * sigma_f
 
     vMol = v_moller_from_s_vectorized(s, E1, E2, m_initial)
@@ -173,14 +160,12 @@ def kernel_from_grid_nearest(T, T_grid, K_grid):
     """
     Pick the tabulated kernel closest to T.
 
-    Nearest-neighbour rather than interpolation: the kernels are (Np, Np)
+    Nearest-neighbor rather than interpolation: the kernels are (Np, Np)
     matrices, and blending two of them every solver step would cost more than
     simply tabulating T_span more finely. Accuracy is therefore controlled by
-    the density of the build grid, and the solver's temperature grid should be
-    no finer than it.
+    the density of the build grid.
 
-    `T_grid` must be an ndarray, not a list: the subtraction below is
-    elementwise.
+    `T_grid` must be an ndarray, not a list.
     """
     T = float(T)
     i = int(np.argmin(np.abs(T_grid - T)))

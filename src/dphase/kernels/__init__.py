@@ -1,7 +1,7 @@
 """
 Precomputed collision kernels and event caches.
 
-Organised along two axes: which sector the process couples to, and whether
+Organized along two axes: which sector the process couples to, and whether
 it changes particle number.
 
                     | dark sector             | SM bath

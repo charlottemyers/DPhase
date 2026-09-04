@@ -3,7 +3,7 @@ Background cosmology: g_*(T), Hubble rate, entropy density, and the radiation-do
 time-temperature relation. Everything here describes the SM bath and the expansion it
 drives.
 
-Units are natural (GeV) throughout; see `dphase.constants`.
+All units are natural (GeV); see `dphase.constants`.
 """
 
 from functools import lru_cache
@@ -22,7 +22,7 @@ from dphase.constants import (
 
 
 # ---------------------------------------------------------------------------
-# Effective degrees of freedom
+# Effective d.o.f. and expansion history
 # ---------------------------------------------------------------------------
 
 _GSTAR_TABLE_NAME = "gstars.dat"
@@ -59,7 +59,7 @@ def gstar_interp(T, path=None):
     values.
 
     NOTE: the provided table has a single g_* column, so this one function
-    supplies both the entropy g_{*s} (used by `s_SM` and the comoving grid)
+    supplies both the entropy g_{*s} (used by `s_SM`)
     and the energy-density g_{*rho} (used by `H_of_T`). Those are basically identical
     over the mass range we consider; see arXiv:1204.3622 for a more detailed discussion.
 
@@ -106,7 +106,7 @@ def H_of_T(T, rho_h=0.0, t_dep=True, include_hs=True):
 
     Parameters
     ----------
-    T          : SM photon temperature [GeV]
+    T          : SM temperature [GeV]
     rho_h      : hidden-sector energy density [GeV^4]
     t_dep      : use the tabulated g_*(T) rather than the constant fallback
     include_hs : if False, ignore `rho_h` entirely
@@ -122,8 +122,8 @@ def H_of_T(T, rho_h=0.0, t_dep=True, include_hs=True):
 
 def H_RD(T, gstar):
     """
-    Hubble rate for a purely radiation-dominated universe, with g_* passed in
-    explicitly rather than looked up.
+    Hubble rate for a purely radiation-dominated universe. Same as H_of_T, but with g_* passed in
+    explicitly rather than looked up, and with no hidden-sector contribution.
 
         H = sqrt(8 pi^3 g_* / 90) T^2 / MPL
 
@@ -143,19 +143,13 @@ def H_RD(T, gstar):
 def t_of_T_RD(T, gstar):
     """
     Cosmic time at temperature T during radiation domination.
-
     In an exactly radiation-dominated universe a ~ t^{1/2}, so H = 1/(2t) and
-
-        t(T) = 1 / (2 H(T)).
-
-    The solver uses differences of this quantity to convert a step in T into a
-    step in t.
-
+    t(T) = 1 / (2 H(T)).
 
     Parameters
     ----------
     T     : SM temperature [GeV]
-    gstar : effective relativistic degrees of freedom at T
+    gstar : effective relativistic dof at T
 
     Returns
     -------
@@ -165,7 +159,7 @@ def t_of_T_RD(T, gstar):
 
 
 # ---------------------------------------------------------------------------
-# Thermodynamic quantities
+# Thermodynamic quantitites
 # ---------------------------------------------------------------------------
 
 def entropy_density(T, gstar):

@@ -104,7 +104,7 @@ class PhaseSpaceGrid:
 
     def a_of_T(self, T, gstars_func=None):
         """
-        Scale factor, normalised to a(T_ref) = 1.
+        Scale factor, normalized to a(T_ref) = 1.
 
         Comoving entropy conservation gives a T g_{*s}^{1/3} = const, hence
 

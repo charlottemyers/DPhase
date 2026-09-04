@@ -1,6 +1,6 @@
 """
-Background cosmology: g_*(T), Hubble rate, entropy density, and the
-radiation-dominated time-temperature relation. Everything here describes the Standard Model bath and the expansion it
+Background cosmology: g_*(T), Hubble rate, entropy density, and the radiation-dominated
+time-temperature relation. Everything here describes the SM bath and the expansion it
 drives.
 
 Units are natural (GeV) throughout; see `dphase.constants`.
@@ -32,9 +32,7 @@ _GSTAR_TABLE_NAME = "gstars.dat"
 def _load_gstar_table(path=None):
     """
     Load and cache the tabulated g_*(T).
-
     Cached because `gstar_interp` is called from inside the ODE right-hand side.
-
     The table ships as package data. `path` overrides it with a two-column
     file of (T [GeV], g_*), ascending in T.
     """
@@ -57,16 +55,15 @@ def _load_gstar_table(path=None):
 def gstar_interp(T, path=None):
     """
     Linearly interpolate the tabulated g_*(T).
-
     Outside the tabulated range NumPy's `interp` clamps to the endpoint
-    values, which is the physically sensible behaviour at both ends (a
-    constant relativistic content).
+    values.
 
-    CAVEAT: the shipped table has a single g_* column, so this one function
+    NOTE: the provided table has a single g_* column, so this one function
     supplies both the entropy g_{*s} (used by `s_SM` and the comoving grid)
-    and the energy-density g_{*rho} (used by `H_of_T`). Those differ by a few
-    percent around the QCD transition and around e+e- annihilation. Splitting
-    them requires a two-column table.
+    and the energy-density g_{*rho} (used by `H_of_T`). Those are basically identical
+    over the mass range we consider; see arXiv:1204.3622 for a more detailed discussion.
+
+    The table is provided in T [GeV] and g_*, ascending in T, digitized from Fig. 2 of arXiv:1204.3622.
     """
     T_data, g_eff = _load_gstar_table(path)
     return np.interp(T, T_data, g_eff)
@@ -82,7 +79,7 @@ def gstar_SM(T, t_dep=True):
 
 def dln_gstars_SM_dlnT(T, t_dep=True, delta=1e-2):
     """
-    d ln g_{*s} / d ln T by centred finite difference.
+    d ln g_{*s} / d ln T by centered finite difference.
 
     This is the correction factor relating dT/dt to the Hubble rate: entropy
     conservation gives a*T*g_{*s}^{1/3} = const, so T does not simply scale as

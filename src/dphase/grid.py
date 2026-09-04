@@ -1,13 +1,13 @@
 """
 Comoving momentum grid and the species records that live on it.
 
-The solver works in *comoving* momentum ptilde = a(t) p, which is constant
+The solver works in comoving momentum ptilde = a(t) p, which is constant
 under free expansion. That choice removes the redshift drift term from the
 Boltzmann equation: with ptilde as the coordinate, a free-streaming
 distribution is static, and every df/dt the solver computes is a
 genuine collision effect.
 
-The price is that collision rates depend on *physical* momentum, so every
+The price is that collision rates depend on physical momentum, so every
 kernel has to be rebuilt at each temperature -- see `PhaseSpaceGrid.p_phys`
 and the  builders in `dphase.kernels`.
 """
@@ -24,12 +24,12 @@ class PhaseSpaceSpecies:
     name            : key used to index `PhaseSpaceState.f`. The solver looks
                       for the literal names "chi" and "A".
     mass_GeV        : rest mass [GeV]
-    dof             : internal degrees of freedom g. Use 2 for chi -- the two
-                      spin states of the Dirac fermion; the
+    dof             : internal degrees of freedom g. Use 2 for chi
+                      (2 spin states of the Dirac fermion; the
                       antiparticle is a separate population, accounted for by
-                      `PhaseSpaceState.total_DM_number_density`. Use 3 for the
-                      dark photon's polarisations.
-    decay_width_GeV : total width [GeV]; 0 for a stable species.
+                      `PhaseSpaceState.total_DM_number_density`)
+                      Use 3 for the DP's polarizations.
+    decay_width_GeV : total width [GeV]; 0 for stable species.
     """
     name: str
     mass_GeV: float
@@ -56,7 +56,7 @@ def log_bin_edges(p_centers):
     """
     p = np.asarray(p_centers, dtype=float)
     if not np.all(p > 0):
-        raise ValueError("momentum grid centres must be strictly positive")
+        raise ValueError("momentum grid centers must be strictly positive")
 
     logp = np.log(p)
     edges = np.empty(logp.size + 1, dtype=float)

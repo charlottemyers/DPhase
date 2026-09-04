@@ -1,14 +1,14 @@
 """
-Dark Compton: elastic chi A' -> chi A' scattering.
+Dark Compton: elastic chi Z_D -> chi Z_D scattering.
 
 This is the number-preserving / dark-sector cell of the taxonomy in
-`dphase.kernels`. It moves chi and A' between momentum bins without changing
+`dphase.kernels`. It moves chi and Z_D between momentum bins without changing
 either population.
 
 Computational cost
 ---------------------------------------------------------
 The SM elastic channel (`elastic_sm`) uses a Fokker-Planck
-approximation, valid because the bath particles are much lighter than chi so
+approximation, valid because the bath particles are lighter than chi so
 each collision transfers little momentum. That fails here: both partners are
 dark-sector particles of comparable mass. The operator therefore has to be a full 2 -> 2
 redistribution, and the outgoing state depends on t as well as s -- which means
@@ -135,8 +135,7 @@ def _build_xA_elastic_cache_inner(
                 sqrt_s     = np.sqrt(s)
                 p_cm       = np.sqrt(lam_in) / (2.0 * sqrt_s)
 
-                # Starred quantities are CM-frame, fixed entirely by s and the
-                # two masses.
+                # Starred quantities are CM-frame, fixed entirely by s and the 2 masses.
                 E_chi_star = (s + m2_chi - m2_A) / (2.0 * sqrt_s)
                 E_A_star   = (s + m2_A   - m2_chi) / (2.0 * sqrt_s)
                 v_Mol      = np.sqrt(lam_in) / (2.0 * E_chi_k * E_A_l)
@@ -145,8 +144,7 @@ def _build_xA_elastic_cache_inner(
                 if P_tot_sq <= 0.0:
                     # Anti-aligned, near-equal momenta: the CM frame coincides
                     # with the lab, so the boost is the identity. Guarded with
-                    # <= because roundoff can push a vanishing P_tot_sq
-                    # negative.
+                    # <= because roundoff can push a vanishing P_tot_sq negative.
                     gamma   = 1.0
                     cos_psi = 1.0
                     sin_psi = 0.0

@@ -1,18 +1,13 @@
 """
-Collision kernel for chi chibar -> f fbar, the annihilation channel that
-connects the dark sector to the SM bath.
+Collision kernel for chi chibar -> f fbar, the number-changing annihilation channel
+that connects the dark sector to the SM bath.
 
-This is the number-changing / SM-bath cell of the taxonomy in
-`dphase.kernels`. Only a loss kernel is needed here, unlike the dark-sector
-channel: the SM fermions are held in equilibrium at T by their own gauge
-interactions, so detailed balance fixes the inverse reaction from the same
-kernel and no gain cache is required.
+Only a loss kernel is needed here, unlike the dark-sector channel: the SM fermions are held
+in equilibrium at T, so detailed balance fixes the inverse reaction and no gain cache is required.
 
-Every kinematically accessible SM fermion contributes, summed with its colour
-multiplicity, and each one gets its own A'-Z mixed couplings from
-`model.compute_couplings`. Neutrinos are included: the mixing gives the A' a
-coupling proportional to weak isospin and hypercharge, so the neutral channels
-do not vanish the way they would for a purely photon-like mediator.
+Every kinematically accessible SM fermion contributes, summed with its color
+multiplicity, and each one gets its own Z_D-Z mixed couplings from
+`model.compute_couplings`.
 """
 
 import numpy as np

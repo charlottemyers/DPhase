@@ -4,16 +4,12 @@ needs with them.
 
 `PhaseSpaceState` is a mutable class, populated in two stages:
 
-  1. construction  -- grid and species list
+  1. construction   -- grid and species list
   2. precomputation -- couplings, the temperature grid, and the collision
                        kernels/caches tabulated on it
 
-Stage 2 is done by hand at the call site (see `examples/example.ipynb`)
-and every attribute it sets is declared in `__init__` below, initialised to None.
-
-The exception is the per-temperature rate grids, which read as zeros until
-assigned -- so a process whose rate is identically zero needs no assignment at
-all. See `_ZeroDefaultRateGrid` and `PhaseSpaceState.zeroed_rate_grids`.
+Stage 2 is done by hand at the call site (see `example.ipynb`)
+and every attribute it sets is declared in `__init__` below.
 """
 
 import numpy as np
@@ -27,21 +23,11 @@ class _ZeroDefaultRateGrid:
     """
     A per-temperature rate grid that reads as zeros until it is assigned.
 
-    Some rate contributions are identically zero for the dark photon model --
+    Some rate contributions are identically zero for the dark photon model
     A f -> A f elastic scattering, for instance, whose correct rate scales as
     epsilon^4 and is dropped by `kernels.elastic_sm`. Rather than make the
     caller build and assign an array of zeros by hand, those attributes default
     to zeros here, so only the non-trivial grids need assigning.
-
-    The zeros are sized from `T_grid`, which is why this has to be lazy: the
-    length is not known when the state is constructed. Assigning None resets
-    the attribute to the zero default.
-
-    Only ever use this for scalar-per-temperature RATE grids, where "absent"
-    genuinely means "this process contributes nothing". Do NOT use it for the
-    collision kernels or event caches: a missing kernel means the operator
-    cannot run at all, and that should fail loudly rather than silently
-    evaluate to zero.
     """
 
     def __set_name__(self, owner, name):
@@ -74,9 +60,7 @@ class PhaseSpaceState:
     from `self.grid.p_phys(T, self.gstar_func)` at each temperature.
     """
 
-    # Rate grids that read as zeros until assigned -- see _ZeroDefaultRateGrid.
-    # gamma_grid_A is normally left alone: A f -> A f is dropped as an
-    # eps^4 effect, so its rate is zero by construction.
+    # Rate grids that read as zeros until assigned
     gamma_grid_chi = _ZeroDefaultRateGrid()
     gamma_grid_A = _ZeroDefaultRateGrid()
 
@@ -85,7 +69,7 @@ class PhaseSpaceState:
 
     def __init__(self, grid: PhaseSpaceGrid, species: list[PhaseSpaceSpecies]):
         # --- set at construction ---
-        self.grid = grid
+        self.grid = grid # comoving momentum grid, ptilde = p / a(T)
         self.species = {sp.name: sp for sp in species}
         self.f = {sp.name: np.zeros_like(grid.ptilde) for sp in species}
 
@@ -121,10 +105,6 @@ class PhaseSpaceState:
     def zeroed_rate_grids(self):
         """
         Names of the rate grids currently falling back to their zero default.
-
-        Worth checking before a long run: a grid in this list contributes
-        nothing, which is intended for `gamma_grid_A` but would mean elastic
-        scattering is silently switched off if `gamma_grid_chi` appears here.
         """
         return tuple(name for name in self._RATE_GRIDS
                      if getattr(self, "_" + name, None) is None)
@@ -151,25 +131,18 @@ class PhaseSpaceState:
         p = self.grid.p_phys(T, gstars_func=self.gstar_func)
         return sp.dof / (2.0 * np.pi**2) * np.trapezoid(p**2 * self.f[name], p)
 
-    def energy_density(self, name, T):
-        """rho = g/(2 pi^2) int dp p^2 E(p) f(p),  E = sqrt(p^2 + m^2)  [GeV^4]"""
-        sp = self.species[name]
-        p = self.grid.p_phys(T, gstars_func=self.gstar_func)
-        E = np.sqrt(p**2 + sp.mass_GeV**2)
-        return sp.dof / (2.0 * np.pi**2) * np.trapezoid(p**2 * E * self.f[name], p)
-
     def total_DM_number_density(self, T):
         """
         n_chi + n_chibar. The solver evolves f_chi only; with no particle
         -antiparticle asymmetry the two populations are identical, so this is
-        just twice n_chi. This -- not `number_density("chi", T)` -- is what
+        just twice n_chi. This (NOT `number_density("chi", T)`) is what
         goes into the relic abundance.
         """
         return 2.0 * self.number_density("chi", T)
 
     def s_SM(self, T):
         """
-        SM entropy density at T, using *this state's* g_* function rather than
+        SM entropy density at T, using this state's g_* function rather than
         the module-level tabulation -- they can differ if a custom g_*(T) was
         supplied. Needed to convert a number density into a comoving yield.
         """

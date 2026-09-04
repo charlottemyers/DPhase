@@ -36,14 +36,18 @@ For the example notebook, install the extras too:
 pip install -e ".[examples]"
 ```
 
-Requires Python 3.10+, NumPy 2.0+, SciPy, numba 0.61+, and mpmath.
+`requirements-lock.txt` records the exact versions used to run the example notebook; if you want to reproduce them precisely:
+
+```bash
+  pip install -r requirements-lock.txt
+  pip install -e . --no-deps
+```
 
 
 ## Quickstart
 
 *Notation note*: the dark photon is $Z_D$ throughout this document and `A` in the source. `x` refers to $\chi$ and $\bar\chi$ e.g. `species["A"]`, `K_grid_xxAA`.
 
-<!-- The phase-space solver needs its collision kernels tabulated on a temperature grid before it can run. -->
 
 ```python
 import numpy as np

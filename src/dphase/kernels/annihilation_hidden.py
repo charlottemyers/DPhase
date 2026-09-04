@@ -1,9 +1,8 @@
 """
-Collision kernels for chi chibar <-> A' A', the number-changing process
+Collision kernels for chi chibar <-> Z_D Z_D, the number-changing process
 internal to the dark sector.
 
-Both directions are built here, and both come from the same cross section:
-`model.sigma_s_xxAA`, with the reverse direction obtained by crossing.
+Both directions are built here, with the cross section provided by`model.sigma_s_xxAA`.
 Each direction produces two distinct objects, because a Boltzmann collision
 term splits into two pieces that need different treatment:
 
@@ -18,7 +17,7 @@ term splits into two pieces that need different treatment:
 Everything in this module runs once, before the solve, on a temperature grid;
 `dphase.collisions` then looks up the nearest entry each step and contracts it
 against the current distribution. The two `apply_*` / `*_from_grid_*` helpers
-at the bottom are the exception -- they run every step.
+at the bottom are the exceptionl; they run every step.
 """
 
 import numpy as np
@@ -31,8 +30,7 @@ from dphase.model import _sigma_s_xxAA_scalar, sigma_s_xxAA
 _AAXX_DOF_RATIO = 8.0 / 9.0
 
 
-def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False,
-                       const_xsec=None):
+def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
     r"""
     Loss kernel K(p1, p2) for 2 -> 2 annihilation within the dark sector,
 
@@ -55,8 +53,6 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False,
     reverse : False for chi chibar -> A A, using sigma_xxAA(s) directly.
               True for A A -> chi chibar, obtained from the same sigma by
               crossing (see below).
-    const_xsec : if given, bypass the physics and return a constant kernel.
-              Kept for testing; nothing in the package passes it.
 
     Returns
     -------
@@ -75,10 +71,6 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False,
     two initial states.
     """
     p = np.asarray(p, dtype=float)
-    Np = p.size
-
-    if const_xsec is not None:
-        return const_xsec * np.ones((Np, Np), dtype=float)
 
     # Incoming legs both have mass m_in, so E, s and the flux factor below all
     # use m_in -- this is the only thing that distinguishes the two directions

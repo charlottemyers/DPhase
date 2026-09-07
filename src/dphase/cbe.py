@@ -98,10 +98,11 @@ def dTh_dt_rel(nchi, nA, Th, mchi, mA, H, rhoh, Ph, Qh, dnchi_dt, dnA_dt):
     h_A   = mA   * RA   + 3.0 * Th
 
     # C_h = sum n_i [ 3 - z_i^2 dR/dz ] HEAT CAPACITY at constant composition
-    Ch = nchi * (3.0 - zc*zc * dRchi_dz) + nA * (3.0 - zA*zA * dRA_dz)
+    # multiply the chi contribution by 2 to account for both chi and anti-chi
+    Ch = 2.0 * nchi * (3.0 - zc*zc * dRchi_dz) + nA * (3.0 - zA*zA * dRA_dz)
     Ch = max(Ch, 1e-300)
 
-    numer = Qh - (h_chi * dnchi_dt + h_A * dnA_dt) - 3.0 * H * (rhoh + Ph)
+    numer = Qh - (2.0* h_chi * dnchi_dt + h_A * dnA_dt) - 3.0 * H * (rhoh + Ph)
     return numer / Ch
 
 
@@ -256,8 +257,9 @@ def rhs_logx(x, u, params, svxxAA_temp = "HS"):
         Th = safe_exp(ln_Th)
 
     # HS energy density and pressure
-    rhoh = rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
-    Ph = P_i_exact(nchi, Th) + P_i_exact(nA, Th)
+    # multiply the chi contributions by 2 to account for both chi and anti-chi
+    rhoh = 2.0*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
+    Ph = 2.0*P_i_exact(nchi, Th) + P_i_exact(nA, Th)
 
     # Hubble and x-dot
     delta = params.get("delta_dxdt", 1e-2)
@@ -328,7 +330,7 @@ def compute_diagnostics(xs, sol_y, params):
     sv_xxee = _sv(params["sv_xxee"], T)
 
     # HS thermodynamics
-    rhoh = rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
+    rhoh = 2.0*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
     H    = H_of_T(T, rhoh if include_h else 0.0, t_dep = t_dep)
 
 

@@ -136,7 +136,7 @@ def _number_collision_terms(params, nchi, nA, T, Th, svxxAA_temp="HS"):
                 - Gamma_Aee (n_A <m/E>_Th - n_A,eq <m/E>_T)
 
     B is the detailed-balance factor (n_chi,eq^Th / n_A,eq^Th)^2 n_A^2, which
-    is what makes chi chibar <-> AA relax to the *hidden-sector* equilibrium at
+    is what makes chi chibar <-> AA relax to the hidden-sector equilibrium at
     T_hidden rather than to the SM one.
 
     The factor of 2 on the first C_A term counts the two dark photons produced
@@ -144,8 +144,8 @@ def _number_collision_terms(params, nchi, nA, T, Th, svxxAA_temp="HS"):
     dilation that slows the A decay.
 
     `svxxAA_temp` selects the temperature at which the dark-sector
-    annihilation cross section is evaluated: "HS" for T_hidden (correct, since
-    both incoming legs are dark) or anything else for the SM T, for comparison.
+    annihilation cross section is evaluated: "HS" for T_hidden (both
+    incoming legs are dark) or anything else for the SM T, for comparison.
 
     Returns
     -------
@@ -187,10 +187,9 @@ def collisions(params, nchi, nA, T, Th, svxxAA_temp="HS"):
     The three energy channels are
 
         Q_ann : annihilation to SM fermions removes rest mass m_chi per event
-        Q_dec : A decay removes rest mass m_A per event. No time dilation
-                factor here -- this is an energy budget, not a rate.
+        Q_dec : A decay removes rest mass m_A per event.
         Q_el  : elastic chi-e scattering drives T_hidden towards T, and
-                vanishes when they are equal. Gated on params["elastic"].
+                vanishes when they are equal.
 
     Returns
     -------
@@ -208,10 +207,8 @@ def collisions(params, nchi, nA, T, Th, svxxAA_temp="HS"):
 
     if params.get("elastic", False):
         Gkin = gamma_kin(alphaD, epsilon, mA, mchi, T)
-        # Elastic transfer is proportional to the hidden-sector enthalpy and
-        # to the temperature difference that drives it.
-        rhoh = rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
-        Ph = P_i_exact(nchi, Th) + P_i_exact(nA, Th)
+        rhoh = 2*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
+        Ph = 2*P_i_exact(nchi, Th) + P_i_exact(nA, Th)
         Q_el = Gkin * (rhoh + Ph) * (T - Th) / max(Th, VAL_FLOOR)
     else:
         Gkin = 0.0
@@ -292,7 +289,7 @@ def rhs_logx(x, u, params, svxxAA_temp = "HS"):
     dln_nA_dx   = dnA_dx / np.maximum(nA, VAL_FLOOR)
     dln_Th_dx   = dTh_dx / np.maximum(Th, VAL_FLOOR)
 
-    # Clip log-derivatives to keep numerical Jacobians finite in very stiff regimes.
+    # Clip log-derivatives
     clip = float(params.get("max_abs_dlnydx", 1e8))
     dln_nchi_dx = np.clip(dln_nchi_dx, -clip, clip)
     dln_nA_dx   = np.clip(dln_nA_dx,   -clip, clip)
@@ -310,10 +307,7 @@ def compute_diagnostics(xs, sol_y, params):
     abundance came out as it did.
 
     Every returned rate is divided by H, so the value 1 marks the point where
-    that process decouples: Gamma/H >> 1 is efficient, << 1 is frozen out. The
-    Q_*/(H rho) entries do the same for energy transfer rather than number
-    changing. `nchi_over_nchieq` is the direct chemical-equilibrium check.
-
+    that process decouples
     Returns
     -------
     dict of arrays over `xs`, plus the `params` used.
@@ -364,9 +358,6 @@ def compute_diagnostics(xs, sol_y, params):
     Gamma_chem_over_H = np.abs(Cchi) / (H * np.maximum(np.abs(nchi - nxeq_Th), VAL_FLOOR))
 
     # --- energy-transfer diagnostics ---
-    # Guarded: with elastic transfer disabled these are identically zero, and
-    # rhoh can underflow to a denormal deep in the tail. Diagnostics must never
-    # be the thing that fails a run, so fall back to zeros.
     try:
         rhoh_floor = np.maximum(rhoh, VAL_FLOOR)
         Q_ann_over_Hrho = np.abs(Q_ann) / (H * rhoh_floor)
@@ -426,7 +417,6 @@ def evolve(params, x_initial, x_final, y0, xs, log_space = True, rtol = 1e-7, at
             raise ValueError("All initial conditions must be finite and > 0 in log-space mode.")
 
         u0 = np.log(y0)
-        # Pass svxxAA_temp via args so rhs_logx actually receives it.
         sol = _solve(
             rhs_logx,
             (x_initial, x_final),

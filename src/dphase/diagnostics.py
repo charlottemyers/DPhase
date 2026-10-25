@@ -11,11 +11,6 @@ density fixes its normalization. Then
   - kurt_ratio = (<p^4>/<p^2>^2)_f / (<p^4>/<p^2>^2)_eq measures the shape. It
     is independent of normalization and temperature by construction: 1 for a
     thermal shape, > 1 (< 1) for a distribution more (less) tail-heavy,
-  - Evar_ratio = Var(E)_f / Var(E)_eq compares the energy spread to thermal,
-  - KL         = (1/n) int f ln(f / f_eq) is the entropy deficit per particle
-    in nats; >= 0, and 0 only for f = f_eq,
-  - TV         = (1/2n) int |f - f_eq| is the fraction of particles that would
-    have to move to make f thermal.
 
 """
 
@@ -43,7 +38,7 @@ def mb_reference(f, E, W, T_guess):
     f       : distribution on the grid
     E       : energies of the grid points [GeV]
     W       : per-bin phase-space weight, with n = sum(W f)
-    T_guess : scale for the root bracket, normally the SM temperature [GeV]
+    T_guess : scale for the root bracket [GeV]
 
     Returns
     -------
@@ -84,8 +79,7 @@ def thermality_metrics(T_vals, snapshots, state, species="chi",
     state        : PhaseSpaceState used for the run (grid and masses)
     species      : which species to analyze
     x_min, x_max : optional range in x = m_chi / T to keep
-    gstar_func   : g_*(T) used to map comoving to physical momenta; None uses
-                   state.gstar_func, which is what the solver used
+    gstar_func   : g_*(T) used to map comoving to physical momenta
 
     Returns
     -------
@@ -94,9 +88,8 @@ def thermality_metrics(T_vals, snapshots, state, species="chi",
         T          : SM temperature [GeV]
         T_eff      : temperature of the matched MB [GeV]
         Tratio     : T_eff / T
-        kurt_ratio, Evar_ratio, KL, TV : see the module docstring
-    Snapshots where the species is absent, or no matching MB exists, are
-    skipped.
+        kurt_ratio, Evar_ratio, KL, TV
+
     """
     if gstar_func is None:
         gstar_func = state.gstar_func

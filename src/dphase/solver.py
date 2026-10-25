@@ -6,7 +6,7 @@ reduces to
     df_s(ptilde_i) / dt = sum over collision operators,
 
 with no drift term: because ptilde = a(t) p is comoving, free expansion moves
-no probability between bins, so every right-hand side here is a pure
+no probability between bins, so every RHS contribution is really a
 collision effect.
 
 State vector
@@ -16,8 +16,7 @@ The solver flattens all species into one vector,
     y = [ f_chi(p_0) ... f_chi(p_{Np-1}),  f_ZD(p_0) ... f_ZD(p_{Np-1}) ]
 
 of length n_species * Np, so that a single Newton solve couples the species.
-Species order is `list(state.f.keys())`, i.e. the order they were passed to
-`PhaseSpaceState`. Species are located by name, so the order is arbitrary.
+Species order is `list(state.f.keys())`. Species are located by name; order is arbitrary.
 
 Time stepping
 -------------
@@ -29,7 +28,7 @@ taken as:
 
 solved for f_next with `scipy.optimize.root`.
 
-Operators fall into three groups, treated differently:
+Operators fall into three types:
 
   linear     heavy-partner scattering (C @ f_chi) and light-partner
              scattering, a conservative Fokker-Planck matrix: exactly implicit.

@@ -433,7 +433,7 @@ def rhs_logx(x, u, params, svxxZDZD_temp = "HS"):
 
     mchi = params["mchi"];  mZD = params["mZD"]
     t_dep = params.get("t_dep", True)
-    include_h = params.get("include_hs_in_H", True)
+    include_h = params.get("include_hs_in_H", False)
     T    = mchi / x  # SM temperature
 
     ln_nchi, ln_nZD, ln_Th  = u

@@ -5,21 +5,18 @@ Phase-space Boltzmann solver for dark photon (DP) dark matter.
 DPhase solves the momentum-resolved Boltzmann equation for a Dirac
 fermion dark matter candidate $\chi$ coupled to the Standard Model through a kinetically mixed dark photon $Z_D$. It evolves the distribution functions $f_\chi(p,T)$ and $f_{Z_D}(p,T)$ directly rather than assuming a thermal shape, so it captures departures from kinetic equilibrium.
 
-
 ## Features
-
 - Full phase-space evolution of $f_\chi(p,T)$ and $f_{Z_D}(p,T)$ on
   a comoving momentum grid, with no thermal-shape assumption on either species
-- Freeze-out, freeze-in, and the transitional regime are handled by the same solver — no switching between codes or approximations at the boundary.
+- Freeze-out, freeze-in, and the transitional regime are handled by the same solver, with no approximations at the boundary.
+- Full $Z$--$Z_D$ mass mixing, so dark photon masses up to the EW scale are treated consistently
 - Collision terms:
-  - $\chi\bar{\chi} \rightarrow f\bar{f}$: annihilation to all kinematically accessible SM fermions, with full $Z_D$--Z mixing
+  - $\chi\bar{\chi} \rightarrow f\bar{f},\ W^+W^-$: annihilation to all kinematically accessible SM final states through $s$-channel $Z$ / $Z_D$
   - $\chi\bar{\chi} \leftrightarrow Z_D Z_D$: hidden sector annihilation, as a full $2\rightarrow2$ redistribution operator
-  - $\chi f \rightarrow \chi f$: elastic scattering off the SM bath, as a semi-relativistic Fokker--Planck operator
-  - $\chi Z_D \rightarrow \chi Z_D$ dark Compton elastic scattering,
-    as a full $2\rightarrow2$ redistribution operator
-  - $Z_D \rightarrow f\bar{f}$ decay and inverse decay
-- A number-density solver ([`cbe.py`](src/dphase/cbe.py)) alongside the
-  phase-space one to compare the full vs moment-based results
+  - $\chi B \rightarrow \chi B$: elastic scattering off the SM bath, as a Fokker-Planck operator for light fermions and a full $2\rightarrow2$ operator for heavy partners (top, $W^\pm$)
+  - $\chi Z_D \rightarrow \chi Z_D$: dark Compton scattering, as a full $2\rightarrow2$ redistribution operator
+  - $Z_D \rightarrow f\bar{f}$ decay and inverse decay, optionally with in-medium corrections to the effective mixing
+- A number-density solver ([`cbe.py`](src/dphase/cbe.py)), evolving $n_\chi$, $n_{Z_D}$ and a separate dark-sector temperature, to compare the full vs moment-based results
 
 
 ## Installation
@@ -39,47 +36,65 @@ pip install -e ".[examples]"
 `requirements-lock.txt` records the exact versions used to run the example notebook; if you want to reproduce them precisely:
 
 ```bash
-  pip install -r requirements-lock.txt
-  pip install -e . --no-deps
+pip install -r requirements-lock.txt
+pip install -e . --no-deps
 ```
 
 
 ## Quickstart
 
-*Notation note*: the dark photon is $Z_D$ throughout this document and `A` in the source. `x` refers to $\chi$ and $\bar\chi$ e.g. `species["A"]`, `K_grid_xxAA`.
-
+A run has four steps: set up the species and grid, set the couplings, precompute the collision kernels on a temperature grid, and solve.
 
 ```python
 import numpy as np
 import dphase
 from dphase import kernels
+from dphase.cosmology import compute_yields_from_snaps
 
-# 1. Species and grid
-chi = dphase.PhaseSpaceSpecies(name="chi", mass_GeV=10.0, dof=2.0)
-A   = dphase.PhaseSpaceSpecies(name="A",   mass_GeV=5.0,  dof=3.0)
+# 1. Species and comoving momentum grid
+m_chi, m_ZD = 10.0, 5.0                          # [GeV]
+chi = dphase.PhaseSpaceSpecies(name="chi", mass_GeV=m_chi, dof=2.0)
+ZD  = dphase.PhaseSpaceSpecies(name="ZD",  mass_GeV=m_ZD,  dof=3.0)
 
-T_ref, T_final = 10.0 / 0.05, 10.0 / 600.0        # x = m_chi/T from 0.05 to 600
-grid = dphase.PhaseSpaceGrid(ptilde_min=0.1, ptilde_max=50.0 * T_ref,
+T_ref, T_final = 150.0, m_chi / 100.0
+grid = dphase.PhaseSpaceGrid(ptilde_min=1e-2 * m_chi, ptilde_max=100.0 * T_ref,
                              Np=120, T_ref=T_ref)
 
-# 2. State and model parameters
-state = dphase.PhaseSpaceState(grid, [chi, A])
-state.epsilon    = 1e-10       # kinetic mixing
-state.alphaD     = 1e-6        # dark fine structure constant
-state.T_grid     = np.geomspace(T_ref, T_final, 150)
+# 2. State and couplings
+state = dphase.PhaseSpaceState(grid, [chi, ZD])
+state.epsilon = 1e-10                            # kinetic mixing
+state.alphaD  = 1e-6                             # dark coupling strength
+state.T_grid  = np.geomspace(T_ref, T_final, 120)
+T_grid = state.T_grid
 
-# 3. Precompute collision kernels on state.T_grid (slow)
-#    ... see examples/example.ipynb
+# 3. Precompute collision kernels
+# chi chibar -> f fbar, W+ W-
+state.K_grid_xxff = kernels.build_xxff_kernels(T_grid, state, m_initial=m_chi, m_mediator=m_ZD)
+state.K_grid_xxWW = kernels.build_xxWW_kernels(T_grid, state, m_initial=m_chi, m_mediator=m_ZD)
 
-# 4. Solve
-T_grid, snapshots = dphase.solve_BE(state, state.T_grid)
+# chi chibar <-> Z_D Z_D
+state.K_grid_xxZDZD = kernels.build_annihilation_loss_kernels(T_grid, state, m_chi, m_ZD, "xxZDZD")
+state.K_grid_ZDZDxx = kernels.build_annihilation_loss_kernels(T_grid, state, m_chi, m_ZD, "ZDZDxx")
+state.gain_caches_xxZDZD = kernels.build_annihilation_gain_caches(T_grid, state, angular="anisotropic")
+
+# chi B -> chi B: light fermions by Fokker-Planck
+gamma_grid = kernels.build_xfxf_kernels(T_grid, state, exclude=("t",))
+state.gamma_grid_chi = np.array([g["chi"] for g in gamma_grid])
+state.FP_matrix_grid = kernels.build_fp_matrices(T_grid, state)
+
+# 4. Solve from an empty dark sector
+state.set_initial_f("chi", np.zeros_like(grid.ptilde))
+state.set_initial_f("ZD",  np.zeros_like(grid.ptilde))
+T_vals, snapshots = dphase.solve_BE(state, T_grid, Gamma_H_max=50)
+
+# 5. Yields and relic abundance
+Y_DM, Y_ZD, *_ = compute_yields_from_snaps(T_vals, m_chi, m_ZD, state, snapshots)
+print("Omega h^2 =", dphase.relic_abundance(Y_DM[-1], m_chi))
 ```
 
-`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature step, on the comoving grid. Convert to an abundance with
-`state.total_DM_number_density(T)`, `dphase.Y`, and
-`dphase.relic_abundance`.
+`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature in `T_grid`, on the comoving grid. `compute_yields_from_snaps` returns $Y_{\rm DM} = Y_\chi + Y_{\bar\chi}$ (plus the $Z_D$ and equilibrium yields), which is what `relic_abundance` expects.
 
-See [`examples/example.ipynb`](examples/example.ipynb) for a worked example.
+See [`examples/example.ipynb`](examples/example.ipynb) for a worked example with plots. For the number-density solver, see the parameter list at the top of [`cbe.py`](src/dphase/cbe.py) and `cbe.evolve`.
 
 
 ## Module layout
@@ -87,38 +102,22 @@ See [`examples/example.ipynb`](examples/example.ipynb) for a worked example.
 | Module | Contents |
 |---|---|
 | `constants.py` | SM fermion content, EW parameters, unit conversions |
-| `kinematics.py` | Källén function, Møller velocity |
-| `grid.py` | Comoving momentum grid, species records, grid setup |
+| `kinematics.py` | Kinematic helper functions|
+| `grid.py` | Comoving momentum grid and species records |
 | `state.py` | Parameter and kernel container; derived densities |
-| `model.py` | DP cross sections, widths, and couplings |
+| `cosmology.py` | $g_*(T)$, Hubble rate, entropy, yields and relic abundance |
+| `model.py` | DP couplings ($Z$--$Z_D$ mixing), matrix elements, cross sections, widths, thermal averages |
 | `kernels/` | Precomputed collision kernels, one submodule per process |
 | `collisions.py` | Collision operators, assembled from the kernels |
-| `solver.py` | Phase-space ODE solver (`solve_BE`) |
-| `cosmology.py` | $g_*(T)$, Hubble rate, entropy |
-| `cbe.py` | Number-density Boltzmann solver  |
+| `solver.py` | Phase-space solver (`solve_BE`) |
+| `cbe.py` | Number-density (cBE) Boltzmann solver |
+| `diagnostics.py` | Thermality of the evolved distributions|
 
 `kernels/` is organized on two axes: which sector the process couples to, and whether it changes particle number.
 
 |  | Dark Sector | SM Bath |
 |---|---|---|
-| **Number-changing** | `annihilation_hidden.py` ($\chi\bar{\chi} \leftrightarrow Z_D Z_D$) | `annihilation_sm.py` ($\chi\bar{\chi} \rightarrow f\bar{f}$) |
-| **Number-preserving** | `elastic_hidden.py` ($\chi Z_D \rightarrow \chi Z_D$) | `elastic_sm.py` ($\chi f \rightarrow \chi f$) |
+| **Number-changing** | `annihilation_hidden.py` ($\chi\bar{\chi} \leftrightarrow Z_D Z_D$) | `annihilation_sm.py` ($\chi\bar{\chi} \rightarrow f\bar{f},\ W^+W^-$) |
+| **Number-preserving** | `elastic_hidden.py` ($\chi Z_D \rightarrow \chi Z_D$) | `elastic_sm_light.py` (light fermions, Fokker-Planck), `elastic_sm_heavy.py` (top and $W^\pm$, full operator) |
 
 **On using a different model:** Everything except `model.py` is independent of the DP. To study a different mediator, replace that one module with different cross sections and decay widths, keeping the same function signatures and units.
-
-
-<!-- ## Physics and references
-
-Formulas are taken from the literature as follows. Equation numbers refer to
-the cited papers.
-
-| Quantity | Implementation | Source |
-|---|---|---|
-| σ(s) for χχ̄ → A′A′ | `model.sigma_s_xxAA` | Coy, Kimus, Tytgat, [arXiv:2405.10792](https://arxiv.org/abs/2405.10792), Eq. (B.1) |
-| A′–Z mass and coupling mixing | `model.compute_couplings` | TODO — add reference for Eq. (A.2) |
-| Γ(A′ → f f̄), \|M\|² with mixing | `model.A_ff_decay_m2` | Curtin et al., Eq. (2.12), inverted — TODO add arXiv number |
-| γ(T) momentum exchange rate | `kernels.elastic_sm.gamma_single_fermion` | Binder et al., [arXiv:1706.07433](https://arxiv.org/abs/1706.07433), Eqs. (6)–(7) |
-| Fokker–Planck elastic operator | `collisions.fokker_planck_dfdt` | Binder et al., [arXiv:1706.07433](https://arxiv.org/abs/1706.07433), Eq. (8) |
-| Hidden-sector ρ, P, dT<sub>h</sub>/dt | `cbe.rho_i_exact`, `cbe.dTh_dt_rel` | [arXiv:2504.00077](https://arxiv.org/abs/2504.00077), Eq. (2.15) |
-| \|M\|² for χf → χf, t-channel A′ | `model.M2_chi_f_avg` | Standard trace calculation |
-| \|M\|² for χA′ → χA′ | `model.xZD_xZD_m2` | Standard trace calculation | -->

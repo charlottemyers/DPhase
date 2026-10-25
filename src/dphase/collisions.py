@@ -13,37 +13,37 @@ affects and exact zeros elsewhere, so the solver can simply add them.
 
 A few conventions:
 
-  * Kernels are looked up by nearest temperature, not interpolated. Accuracy
-    comes from tabulating `state.T_grid` finely.
+  * Kernels are looked up by nearest temperature, not interpolated.
   * The kernels are built with per-d.o.f. cross sections, so the
-    degeneracy factors (g_chi, g_A) are applied here, at the rate level --
-    see `AA_chichi_collision_rhs`.
+    degeneracy factors (g_chi, g_ZD) are applied here, at the rate level;
+    see `ZDZD_chichi_collision_rhs`.
 """
 
 import numpy as np
 
 from dphase.constants import FERMIONS
-from dphase.model import A_ff_decay_m2
+from dphase.model import ZD_ff_decay_m2
 from dphase.kernels import (
     gain_cache_from_grid_nearest, apply_gain_cache, kernel_from_grid_nearest,
-    _xA_kernel_index, apply_xA_cache, gamma_from_grid
+    _xZD_kernel_index, apply_xZD_cache,
+    fp_matrices_from_grid_nearest,
+    heavy_partner_matrix_from_grid_nearest,
 )
 
 def loss_self_annih_dfdt(p, f, K, dlogp):
     """
-    Loss half of a two-body annihilation term, for an isotropic distribution
+    Loss part of a two-body annihilation term, for an isotropic distribution
     on a log-p grid:
 
         df_i/dt = -sum_j W_j K_ij f_i f_j,     W_j = p_j^3 dlogp_j / (2 pi^2)
 
     Loss ONLY -- there is no equilibrium term here. Use this where the gain is
     supplied separately (as a deposition cache), which is the case for
-    chi chibar <-> A A; use `collision_annihilation_dfdt_from_kernel` where
+    chi chibar <-> Z_D Z_D; use `collision_annihilation_dfdt_from_kernel` where
     detailed balance against a thermal bath supplies the gain instead.
 
-    Bilinear in f because two particles must meet. W_j is the phase-space
-    measure of the partner bin, so the sum over j is the integral over the
-    annihilation partner's momentum.
+    W_j is the phase-space measure of the partner bin, so the sum over j
+    is the integral over the annihilation partner's momentum.
 
     Parameters
     ----------
@@ -58,14 +58,12 @@ def loss_self_annih_dfdt(p, f, K, dlogp):
     """
     W = (1.0 / (2.0 * np.pi**2)) * p**3 * dlogp
     GL =  - (f[:, None] * f[None, :])  # (Np,Np)
-    ## sum over annihilation partner j
     dfdt = np.sum((K * GL) * W[None, :], axis=1)
     return dfdt # shape (Np,)
 
 
 # ===========================================================================
-# Annihilation: chi chibar -> f fbar (into the SM bath) and chi chibar <-> A A
-# (internal to the dark sector)
+# Annihilation: chi chibar -> f fbar (into the SM bath) and chi chibar <-> Z_D Z_D
 # ===========================================================================
 
 
@@ -78,8 +76,7 @@ def collision_annihilation_dfdt_from_kernel(p, f, feq, K, dlogp):
     The `feq_i feq_j` term is the inverse reaction, fixed by detailed balance:
     because the final state (SM fermions) stays in equilibrium at T, the gain
     is completely determined by the same kernel and the equilibrium
-    distribution, with no separate deposition cache needed. The operator
-    vanishes identically when f = feq.
+    distribution. The operator vanishes identically when f = feq.
 
     Parameters
     ----------
@@ -100,20 +97,28 @@ def collision_annihilation_dfdt_from_kernel(p, f, feq, K, dlogp):
     return dfdt # shape (Np,)
 
 
-def annihilation_collision_rhs_kernel(T, y_flat, state, names, Np, fermion_dist = 'FD'):
+def annihilation_collision_rhs_kernel(T, y_flat, state, names, Np,
+                                      fermion_dist='MB', channels=("ff", "WW")):
     """
-    Collision operator for chi chibar -> f fbar, using the kernel tabulated on
-    `state.T_grid`.
+    Collision operator for chi chibar -> f fbar and chi chibar -> W+ W-,
+    using the kernels tabulated on `state.T_grid`.
 
-    Only chi is affected: the SM fermions are assumed to stay in equilibrium at
-    T, so their distributions are not evolved.
+    Only chi is affected: the SM final states are assumed to stay in
+    equilibrium at T, so their distributions are not evolved. Both channels
+    relax chi toward the same feq, so their kernels simply add.
+
+    Degeneracy factor: the kernels carry sigma averaged over the incoming
+    chi chibar spins and f is per dof, so the rate picks up the dof of the
+    chibar partner, g_chi (as `chi_loss_pref` in `ZDZD_chichi_collision_rhs`).
 
     Parameters
     ----------
     T, y_flat, state, names, Np : see the module docstring
     fermion_dist : {"FD", "MB"}
-        Statistics used for the *equilibrium chi* distribution that the
-        annihilation relaxes toward. "MB" (Maxwell-Boltzmann) is the usual choice
+        Statistics used for the equilibrium chi distribution that the
+        annihilation relaxes toward. "MB" (Maxwell-Boltzmann) is the standard choice
+    channels : which kernels to include, any of "ff" and "WW". "WW" is used
+        only if `state.K_grid_xxWW` has been set.
 
     Returns
     -------
@@ -124,8 +129,8 @@ def annihilation_collision_rhs_kernel(T, y_flat, state, names, Np, fermion_dist 
     out = np.empty_like(y)
 
     p_phys = state.grid.p_phys(T, gstars_func=state.gstar_func)
-    sp = state.species["chi"]
-    E_phys = np.sqrt(p_phys**2 + sp.mass_GeV**2)
+    chi = state.species["chi"]
+    E_phys = np.sqrt(p_phys**2 + chi.mass_GeV**2)
 
     if fermion_dist == 'FD':
         feq = 1.0 / (np.exp(E_phys / T) + 1.0)
@@ -133,13 +138,18 @@ def annihilation_collision_rhs_kernel(T, y_flat, state, names, Np, fermion_dist 
         feq = np.exp(-E_phys / T)
     else:
         raise ValueError(f"Unknown fermion distribution: {fermion_dist}")
-    K = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxff)
+
+    K = np.zeros((Np, Np))
+    if "ff" in channels:
+        K = K + kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxff)
+    if "WW" in channels and state.K_grid_xxWW is not None:
+        K = K + kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxWW)
 
     for i, name in enumerate(names):
         sl = slice(i*Np, (i+1)*Np)
         if name == "chi":
             f = y[sl]
-            out[sl] = collision_annihilation_dfdt_from_kernel(
+            out[sl] = chi.dof * collision_annihilation_dfdt_from_kernel(
                 p_phys, f, feq, K, state.grid.dlogp)
         else:
             out[sl] = 0.0 * y[sl]
@@ -148,26 +158,23 @@ def annihilation_collision_rhs_kernel(T, y_flat, state, names, Np, fermion_dist 
 
 
 
-def AA_chichi_collision_rhs(T, y_flat, state, names, Np):
+def ZDZD_chichi_collision_rhs(T, y_flat, state, names, Np):
     """
-    Collision operator for chi chibar <-> A A, both directions, both species.
+    Collision operator for chi chibar <-> Z_D Z_D, both directions, both species.
 
     Unlike annihilation into the SM bath, neither side of this reaction is held
-    in equilibrium -- both chi and A are being evolved. So detailed balance
+    in equilibrium; both chi and Z_D are being evolved. So detailed balance
     cannot supply the gain term, and each species needs two separate objects:
 
-      loss : dense kernel, contracted by `loss_self_annih_dfdt`
+      loss : kernel, contracted by `loss_self_annih_dfdt`
       gain : deposition event cache, contracted by `apply_gain_cache`
-
-    Note the crossing in the gain terms: chi is *gained* from AA annihilating,
-    so `dfchi_gain` is driven by `fA`, and vice versa.
 
     Degeneracy factors
     ------------------
     Both kernels carry cross sections that are averaged over the internal
     states of the incoming pair and summed over those of the outgoing pair,
     with the 1/2 for an identical outgoing pair already included. The
-    distributions `f` are likewise per dof. Neither convention knows how many
+    distributions `f` are likewise per dof. Neither convention tracks how many
     internal states the collision partner has, so those factors
     are supplied here at the rate level.
 
@@ -176,25 +183,23 @@ def AA_chichi_collision_rhs(T, y_flat, state, names, Np):
         df_1/dt|loss = - g_2 Int d^3p_2/(2 pi)^3 sigma v_mol f_1 f_2
 
     The momentum integral runs over the partner's momenta but not over its
-    internal states, while sigma was averaged over them -- hence one factor of
+    internal states, while sigma was averaged over them; hence one factor of
     the partner's dof:
 
         chi_loss_pref = gx   partner is chibar, g = gx           -> 2
-        A_loss_pref   = gA   partner is the other A, g = gA      -> 3
+        ZD_loss_pref   = gZD   partner is the other Z_D, g = gZD      -> 3
 
-    Gain. The natural object is the reaction rate per unit volume, which
-    needs the dof of both incoming legs, and a 1/2 if they are identical to
-    avoid counting each pair twice. The products are then spread over the
-    internal states of the species being deposited into, so divide by its dof:
+    Gain. The reaction rate per unit volume needs the dof of both incoming legs,
+    and a 1/2 if they are identical to avoid double counting. The products are
+    then spread over the internal states of the deposited species, so divide by its dof:
 
-        chi_gain_pref = gA^2 / (2 gx)   gA^2 incoming states, 1/2 for the
-                                        identical A A pair, / gx to spread the
-                                        one chi over its states     -> 9/4
-        A_gain_pref   = gx^2 / gA       gx^2 incoming states, / gA  -> 4/3
+        chi_gain_pref = gZD^2 / (2 gx)   gZD^2 incoming states, 1/2 for the
+                                        identical pair, / gx    -> 9/4
+        ZD_gain_pref   = gx^2 / gZD       gx^2 incoming states, / gZD  -> 4/3
 
     Multiplicity of products is carried by the caches rather than by these
     prefactors, and assumes they were built with yield_out_chi = 1 (one chi per
-    reaction, the chibar tracked by the same f) and yield_out_A = 2.
+    reaction, the chibar tracked by the same f) and yield_out_ZD = 2.
 
     """
     T = float(T)
@@ -203,11 +208,11 @@ def AA_chichi_collision_rhs(T, y_flat, state, names, Np):
 
     idx = {n: i for i, n in enumerate(names)}
     sl_chi = slice(idx["chi"]*Np, (idx["chi"]+1)*Np) # slice in the co-moving grid
-    sl_A   = slice(idx["A"]  *Np, (idx["A"]  +1)*Np)
+    sl_ZD   = slice(idx["ZD"]  *Np, (idx["ZD"]  +1)*Np)
 
     floor = 1e-100
     fchi = np.maximum(y[sl_chi], floor)
-    fA   = np.maximum(y[sl_A],   floor)
+    fZD   = np.maximum(y[sl_ZD],   floor)
 
     # Physical momenta at this temperature, accounting for redshift.
     p_phys = state.grid.p_phys(T, gstars_func=state.gstar_func)
@@ -215,127 +220,173 @@ def AA_chichi_collision_rhs(T, y_flat, state, names, Np):
 
     # --- loss: each species destroyed by annihilating with its own kind ---
 
-    K_chi = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxAA)
-    K_A   = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_AAxx)
+    K_chi = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_xxZDZD)
+    K_ZD   = kernel_from_grid_nearest(T, state.T_grid, state.K_grid_ZDZDxx)
 
     dfchi_loss = loss_self_annih_dfdt(p_phys, fchi, K_chi, dlogp)
-    dfA_loss   = loss_self_annih_dfdt(p_phys, fA,   K_A,   dlogp)
+    dfZD_loss   = loss_self_annih_dfdt(p_phys, fZD,   K_ZD,   dlogp)
 
-    # --- gain: each species deposited by the OTHER one annihilating ---
+    # --- gain: each species deposited by the other one annihilating ---
 
-    cache_T = gain_cache_from_grid_nearest(T, state.T_grid, state.gain_caches_xxAA)
+    cache_T = gain_cache_from_grid_nearest(T, state.T_grid, state.gain_caches_xxZDZD)
 
-    dfchi_gain = apply_gain_cache(cache_T["cache_chi_from_AA"], fA)
-    dfA_gain   = apply_gain_cache(cache_T["cache_A_from_xx"], fchi)
+    dfchi_gain = apply_gain_cache(cache_T["cache_chi_from_ZDZD"], fZD)
+    dfZD_gain   = apply_gain_cache(cache_T["cache_ZD_from_xx"], fchi)
 
-    gx, gA = state.species["chi"].dof, state.species["A"].dof
+    gx, gZD = state.species["chi"].dof, state.species["ZD"].dof
 
     # See "Degeneracy factors" in the docstring
-    chi_gain_pref = gA**2 / (2*gx)   # 9/4  incoming AA states, /2 identical pair, /gx
-    chi_loss_pref = gx               # 2    dof of the chibar partner
-    A_gain_pref   = gx**2 / gA       # 4/3  incoming chi chibar states, /gA
-    A_loss_pref   = gA               # 3    dof of the other A
+    chi_gain_pref = gZD**2 / (2*gx)
+    chi_loss_pref = gx
+    ZD_gain_pref   = gx**2 / gZD
+    ZD_loss_pref   = gZD
 
     out[sl_chi] = chi_gain_pref*dfchi_gain + chi_loss_pref*dfchi_loss
-    out[sl_A]   = A_gain_pref  *dfA_gain   + A_loss_pref  *dfA_loss
+    out[sl_ZD]   = ZD_gain_pref  *dfZD_gain   + ZD_loss_pref  *dfZD_loss
     return out
 
 
 # ===========================================================================
-# Decay: A -> f fbar and its inverse
+# Decay: Z_D -> f fbar and its inverse
 # ===========================================================================
+
+def decay_affine_coeffs(T, state, Nmu=28, fermion_dist='MB'):
+    """
+    Affine coefficients of the Z_D -> f fbar collision term.
+    The decay operator is affine in f_ZD and diagonal in momentum,
+
+        df_ZD/dt[j] = S[j] - G[j] f_ZD[j],
+
+    with S the inverse-decay source and G the decay rate (Pauli-blocked for
+    FD). Both depend only on T, not on f, so they can be
+    computed once per temperature and reused.
+
+    For each momentum bin the decay products are integrated over their allowed
+    lab-frame energy range, summed over every kinematically accessible SM
+    fermion:
+
+        MB:  bracket = ff*ffbar - f_ZD                  -> S ~ ff*ffbar, G ~ 1
+        FD:  bracket = ff*ffbar - f_ZD (1-ff)(1-ffbar)  -> S ~ ff*ffbar, G ~ (1-ff)(1-ffbar)
+
+    The per-fermion |M|^2 depends only on (epsilon, m_ZD), so it is computed
+    once rather than per bin and node.
+
+    Parameters
+    ----------
+    T     : SM temperature [GeV]
+    state : PhaseSpaceState, supplying grid, gstar_func, epsilon and species
+    Nmu   : Gauss-Legendre nodes for the fermion-energy integral
+    fermion_dist : {"FD", "MB"}
+        Statistics for the SM fermions. "FD" includes Pauli blocking in the
+        inverse decay; "MB" drops it, which is consistent because
+        exp(-Ef/T) exp(-Efbar/T) = exp(-E_ZD/T) already reproduces the correct
+        equilibrium for f_ZD.
+
+    Returns
+    -------
+    (S, G), each shape (Np,), [GeV] (S per dof of Z_D, G a rate).
+    """
+    T = float(T)
+    mZD = state.species["ZD"].mass_GeV
+    p_phys = state.grid.p_phys(T, gstars_func=state.gstar_func)
+    EZD = np.sqrt(p_phys**2 + mZD**2)
+    Ef_nodes, weights = np.polynomial.legendre.leggauss(Nmu)
+
+    # open channels
+    channels = []
+    for fname, fdata in FERMIONS.items():
+        mf = fdata["mass_GeV"]
+        # skip kinematically inaccessible fermions
+        if mZD <= 2.0 * mf:
+            continue
+        Msq = ZD_ff_decay_m2(epsilon=state.epsilon, mZD=mZD, fermion=fname, mf=mf)
+        channels.append((mf, fdata["Nc"], Msq))
+
+    S = np.zeros_like(p_phys)
+    G = np.zeros_like(p_phys)
+    for j, (p_j, E_j) in enumerate(zip(p_phys, EZD)):
+        gamma = E_j / mZD
+        beta = p_j / E_j if E_j > 0 else 0.0
+        # 1/(16 pi E p) from the 1->2 phase space after the angular integral
+        prefactor = 1.0 / (16.0 * np.pi * E_j * max(p_j, 1e-30))
+        S_j = 0.0
+        G_j = 0.0
+        for mf, Nc, Msq in channels:
+            # p_star = momentum of the fermion in the Z_D rest frame
+            p_star = 0.5 * np.sqrt(mZD**2 - 4.0*mf**2)
+            # min and max fermion energies in the lab frame
+            Ef_min = gamma * (mZD/2.0 - beta*p_star)
+            Ef_max = gamma * (mZD/2.0 + beta*p_star)
+            Ef_vals  = 0.5*(Ef_max - Ef_min)*Ef_nodes + 0.5*(Ef_max + Ef_min)
+            jacobian = 0.5*(Ef_max - Ef_min)
+            Efbar_vals = E_j - Ef_vals
+
+            if fermion_dist == 'FD':
+                ff    = 1.0 / (np.exp(Ef_vals    / T) + 1.0)
+                ffbar = 1.0 / (np.exp(Efbar_vals / T) + 1.0)
+                blk = (1.0 - ff) * (1.0 - ffbar)
+            elif fermion_dist == 'MB':
+                ff    = np.exp(-Ef_vals    / T)
+                ffbar = np.exp(-Efbar_vals / T)
+                blk = 1.0
+            else:
+                raise ValueError(f"Unknown fermion distribution: {fermion_dist}")
+
+            w = prefactor * jacobian * Msq * Nc
+            S_j += w * np.sum(weights * ff * ffbar)
+            G_j += w * np.sum(weights * blk)
+        S[j] = S_j
+        G[j] = G_j
+    return S, G
+
+
+def _decay_affine_coeffs_cached(T, state, Nmu, fermion_dist):
+    """
+    decay_affine_coeffs, reused while T and the model are unchanged.
+
+    Solver evaluates the RHS many times at the same T within one Newton
+    solve, and (S, G) do not depend on f, so only the most recent entry is
+    kept (on `state._decay_affine_cache`).
+    """
+    key = (float(T), int(Nmu), fermion_dist, state.epsilon,
+           state.species["ZD"].mass_GeV, id(state.grid), id(state.gstar_func))
+    cached = state._decay_affine_cache
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    S, G = decay_affine_coeffs(T, state, Nmu=Nmu, fermion_dist=fermion_dist)
+    state._decay_affine_cache = (key, (S, G))
+    return S, G
+
 
 def decay_collision_rhs_direct_allf(T, y_flat, state, names, Np, Nmu=28, fermion_dist = 'MB'):
     """
-    1 -> 2 collision term for A -> f fbar and its inverse, summed over every
-    kinematically accessible SM fermion.
+    1 -> 2 collision term for Z_D -> f fbar and its inverse, summed over every
+    kinematically accessible SM fermion:
 
-    For each momentum bin the decay products are integrated over their allowed
-    lab-frame energy range. The `bracket` is the inverse decay minus the decay,
-    so the operator vanishes when f_A reaches equilibrium.
+        df_ZD/dt = S - G f_ZD,
 
-    Only the A slice is nonzero: the SM fermions are held in equilibrium at T
+    with (S, G) from `decay_affine_coeffs`, computed once per temperature and
+    reused across calls at the same T (see `_decay_affine_coeffs_cached`).
+    The operator vanishes when f_ZD reaches equilibrium.
+
+    Only the Z_D slice is nonzero: the SM fermions are held in equilibrium at T
     and are not evolved.
 
     Parameters
     ----------
     T, y_flat, state, names, Np : see module docstring
-    Nmu : Gauss-Legendre nodes for the fermion-energy integral
-    fermion_dist : {"FD", "MB"}
-        Statistics for the SM fermions. "FD" includes Pauli blocking in the
-        inverse decay; "MB" drops it, which is consistent because
-        exp(-Ef/T) exp(-Efbar/T) = exp(-E_A/T) already reproduces the correct
-        equilibrium for f_A.
+    Nmu, fermion_dist : see `decay_affine_coeffs`
     """
-    T = float(T)
     y = np.asarray(y_flat, dtype=float)
-    out = np.empty_like(y)
+    out = np.zeros_like(y)
 
-    for i, name in enumerate(names):
-        sl = slice(i * Np, (i + 1) * Np)
+    if "ZD" not in names:
+        return out
+    i = list(names).index("ZD")
+    sl = slice(i * Np, (i + 1) * Np)
 
-        # skip non-A species
-        if name != "A":
-            out[sl] = 0.0 * y[sl]
-            continue
-
-        fA = y[sl]
-        sp = state.species[name]
-        mA = sp.mass_GeV
-        p_phys = state.grid.p_phys(T, gstars_func=state.gstar_func)
-        EA = np.sqrt(p_phys**2 + mA**2)
-
-        Ef_nodes, weights = np.polynomial.legendre.leggauss(Nmu)
-        dfdt = np.zeros_like(fA)
-
-        for j, (p_j, E_j) in enumerate(zip(p_phys, EA)):
-            gamma = E_j / mA
-            beta = p_j / E_j if E_j > 0 else 0.0
-            dfdt_j = 0.0
-
-            for fname, fdata in FERMIONS.items():
-                mf = fdata["mass_GeV"]
-                Nc = fdata["Nc"]
-
-                # skip kinematically inaccessible fermions
-                if mA <= 2.0 * mf:
-                    continue
-                Msq_decay_f = A_ff_decay_m2(epsilon=state.epsilon, mA=mA, fermion=fname, mf=mf)
-
-                # p_star = momentum of the fermion in the A rest frame
-                p_star = 0.5 * np.sqrt(mA**2 - 4.0*mf**2)
-
-                # Ef_min and Ef_max are the minimum and maximum fermion energies in the lab frame
-                Ef_min = gamma * (mA/2.0 - beta*p_star)
-                Ef_max = gamma * (mA/2.0 + beta*p_star)
-
-                Ef_vals  = 0.5*(Ef_max - Ef_min)*Ef_nodes + 0.5*(Ef_max + Ef_min)
-                jacobian = 0.5*(Ef_max - Ef_min)
-                Efbar_vals = E_j - Ef_vals
-
-
-                if fermion_dist == 'FD':
-                    ff    = 1.0 / (np.exp(Ef_vals    / T) + 1.0)
-                    ffbar = 1.0 / (np.exp(Efbar_vals / T) + 1.0)
-                    bracket = ff * ffbar - fA[j] * (1.0 - ff) * (1.0 - ffbar)
-                elif fermion_dist == 'MB':
-                    ff    = np.exp(-Ef_vals    / T)
-                    ffbar = np.exp(-Efbar_vals / T)
-                    # No blocking: ff*ffbar = exp(-E_A/T) already gives correct equilibrium for f_A.
-                    bracket = ff * ffbar - fA[j]
-                else:
-                    raise ValueError(
-                        f"Unknown fermion distribution: {fermion_dist}")
-
-                integrand = Msq_decay_f * Nc * bracket
-                # 1/(16 pi E p) from the 1->2 phase space after the angular
-                # integral; floor on p_j guards the p -> 0 bin
-                prefactor = 1.0 / (16.0 * np.pi * E_j * max(p_j, 1e-30))
-
-                dfdt_j += prefactor * jacobian * np.sum(weights * integrand)
-
-            dfdt[j] = dfdt_j
-        out[sl] = dfdt
+    S, G = _decay_affine_coeffs_cached(T, state, Nmu, fermion_dist)
+    out[sl] = S - G * y[sl]
     return out
 
 
@@ -345,116 +396,78 @@ def decay_collision_rhs_direct_allf(T, y_flat, state, names, Np, Nmu=28, fermion
 
 def elastic_collision_rhs(T, y_flat, state, names, Np):
     """
-    Elastic scattering off the SM bath, chi f -> chi f, as a Fokker-Planck
-    operator. Number-preserving: this term moves particles between momentum bins
-    but changes no total
+    Elastic scattering off light SM partners, chi B -> chi B (B = f, W), as a
+    Fokker-Planck operator in conservative (Chang-Cooper) form:
+    df/dt = M(T) @ f per species. Number-preserving: this term moves particles
+    between momentum bins but changes no total
 
-    Fokker-Planck form is a purely LOCAL differential operator-- all the integration
+    Fokker-Planck form is a purely local operator in p -- all the integration
     has already been done to produce the gamma(T) coefficients (see
-    `kernels.elastic_sm`).
+    `kernels.elastic_sm_light`).
 
-    Requires on `state`: `T_grid` and `gstar_func`. The rate grids
-    `gamma_grid_chi` and `gamma_grid_A` read as zeros when unassigned, so an
-    unpopulated grid makes this operator a no-op for that species rather than
-    an error.
+    Requires `state.FP_matrix_grid` from `kernels.build_fp_matrices`.
 
     Returns
     -------
-    df/dt for the whole state vector. Both chi and A are affected, though
-    `gamma_grid_A` is left at its zero default -- A f -> A f is
-    suppressed by eps^4 and is neglected in `kernels.elastic_sm`.
+    df/dt for the whole state vector. Both chi and Z_D are affected, though
+    `gamma_grid_ZD` is left at its zero default; Z_D f -> Z_D f is
+    suppressed by eps^4 and is neglected in `kernels.elastic_sm_light`.
     """
-    T   = float(T)
-    y   = np.asarray(y_flat, dtype=float)
+    y = np.asarray(y_flat, dtype=float)
     out = np.zeros_like(y)
-
-    p_phys    = state.grid.p_phys(T, gstars_func=state.gstar_func)
-    gamma_chi = gamma_from_grid(T, state.T_grid, state.gamma_grid_chi)
-    gamma_A   = gamma_from_grid(T, state.T_grid, state.gamma_grid_A)
-
+    M = fp_matrices_from_grid_nearest(T, state)
+    if M is None:
+        return out
     for i, name in enumerate(names):
-        sl = slice(i * Np, (i + 1) * Np)
-        f  = y[sl]
-
-        if name == "chi":
-            out[sl] = fokker_planck_dfdt(
-                p_phys, f, T, state.species["chi"].mass_GeV, gamma_chi)
-        elif name == "A":
-            out[sl] = fokker_planck_dfdt(
-                p_phys, f, T, state.species["A"].mass_GeV, gamma_A)
-        else:
-            out[sl] = 0.0
-
+        if name in M:
+            sl = slice(i * Np, (i + 1) * Np)
+            out[sl] = M[name] @ y[sl]
     return out
 
 
-
-def fokker_planck_dfdt(p, f, T, m, gamma_T):
+def heavy_partner_collision_rhs(T, y_flat, state, names, Np, partners=None):
     """
-    Semi-relativistic Fokker-Planck elastic scattering collision term.
-    Source: Binder et al. (1706.07433) Eq.(8):
+    Elastic scattering off heavy SM partners (e.g. tops, Ws), chi B -> chi B,
+    with the full 2 -> 2 operator rather than Fokker-Planck. B is held in
+    equilibrium at T, so df_chi/dt = C(T) @ f_chi.
 
-    - Fixed point: f ~ exp(-E/T)  [relativistic equilibrium]
-    - Valid for arbitrary f(p), no thermality assumption on chi
-    - requires momentum transfer per collision << p
+    Requires `state.C_grid_heavy` from `kernels.build_heavy_partner_matrices`.
 
-    Parameters
-    ----------
-    p       : physical momentum grid [GeV], log-spaced, shape (Np,)
-    f       : distribution on grid, shape (Np,)
-    T       : SM temperature [GeV]
-    m       : mass of scattering particle [GeV]
-    gamma_T : scalar momentum exchange rate [GeV] from gamma_from_grid
-
-    Returns
-    -------
-    dfdt : shape (Np,)
-
-    Notes
-    -----
-    Derivatives are taken in log p and converted back, since the grid is
-    log-spaced; `np.gradient` gives second-order central differences in the
-    interior and drops to first order at the two endpoints, so the operator is
-    least accurate exactly at the grid edges. Keep the grid wide enough that
-    f is negligible there.
-
-    Non-finite results are zeroed rather than propagated.
+    partners : names to include (default: all in state.C_grid_heavy)
     """
-    if gamma_T == 0.0:
-        return np.zeros_like(f)
+    y = np.asarray(y_flat, dtype=float)
+    out = np.zeros_like(y)
 
-    E     = np.sqrt(p**2 + m**2)
-    dlogp = np.log(p[1] / p[0])
+    C = heavy_partner_matrix_from_grid_nearest(T, state, partners)
+    if C is None:
+        return out
 
-    dfdlogp   = np.gradient(f, dlogp)
-    dfdp      = dfdlogp / np.maximum(p, 1e-30)
-
-    d2fdlogp2 = np.gradient(dfdlogp, dlogp)
-    d2fdp2    = (d2fdlogp2 - dfdlogp) / np.maximum(p**2, 1e-60)
-
-    result = (E / 2.0) * gamma_T * (
-        T * E * d2fdp2
-        + (p + 2.0 * T * E / p + T * p / E) * dfdp
-        + 3.0 * f
-    )
-    result = np.where(np.isfinite(result), result, 0.0)
-    return result
+    i_chi = list(names).index("chi")
+    sl = slice(i_chi * Np, (i_chi + 1) * Np)
+    out[sl] = C @ y[sl]
+    return out
 
 
-def xA_elastic_collision_rhs(T, y_flat, state, names, Np):
+def xZD_elastic_collision_rhs(T, y_flat, state, names, Np):
     """
-    Elastic chi A -> chi A "dark Compton" scattering, for both species.
+    Elastic chi Z_D -> chi Z_D "dark Compton" scattering, for both species.
 
     Unlike `elastic_collision_rhs`, this is a full 2 -> 2 redistribution rather
     than a Fokker-Planck approximation, because both scattering partners are
-    hidden-sector particles of comparable mass -- the small-momentum-transfer
-    assumption that justifies Fokker-Planck does not hold.
+    hidden-sector particles of comparable mass so the small-momentum-transfer
+    assumption that justifies FP does not hold.
 
-    Number-preserving for both species: chi and A are only moved between
+    Number-preserving for both species: chi and Z_D are only moved between
     momentum bins.
 
-    Requires `state.gain_caches_xAxA`, a list of event caches per entry in
+    Requires `state.gain_caches_xZDxZD`, a list of event caches per entry in
     `state.T_grid`, built by `kernels.elastic_hidden`.
+
+    Degeneracy factors: the cache gives a per-dof rate with sigma averaged
+    over the incoming internal states, so each species picks up the dof of
+    its collision partner:
+
+        df_chi/dt *= g_ZD   (3),     df_ZD/dt *= g_chi   (2)
 
     Returns
     -------
@@ -466,18 +479,18 @@ def xA_elastic_collision_rhs(T, y_flat, state, names, Np):
 
     idx = {nm: i for i, nm in enumerate(names)}
     sl_chi = slice(idx["chi"] * Np, (idx["chi"] + 1) * Np)
-    sl_A   = slice(idx["A"]   * Np, (idx["A"]   + 1) * Np)
+    sl_ZD   = slice(idx["ZD"]   * Np, (idx["ZD"]   + 1) * Np)
 
     f_chi = y[sl_chi]
-    f_A   = y[sl_A]
+    f_ZD   = y[sl_ZD]
 
     T_grid =  state.T_grid
-    i_T = _xA_kernel_index(T, T_grid)
-    cache  = state.gain_caches_xAxA[i_T]
+    i_T = _xZD_kernel_index(T, T_grid)
+    cache  = state.gain_caches_xZDxZD[i_T]
 
     # The cache stores a per-event delta, so one pass yields gain AND loss
-    # together; there is no separate K_loss contraction here!
-    df_chi_total, df_A_total = apply_xA_cache(cache, f_chi, f_A)
-    out[sl_chi] = df_chi_total
-    out[sl_A]   = df_A_total
+    # together; i.e. there is no separate K_loss contraction here
+    df_chi_total, df_ZD_total = apply_xZD_cache(cache, f_chi, f_ZD)
+    out[sl_chi] = state.species["ZD"].dof * df_chi_total
+    out[sl_ZD]   = state.species["chi"].dof * df_ZD_total
     return out

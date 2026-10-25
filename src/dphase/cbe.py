@@ -1,63 +1,113 @@
 """
-Coupled Boltzmann equation (CBE) solver.
+Coupled Boltzmann equation (cBE) solver.
 
 Where `dphase.solver` evolves the full f(p, T), this module assumes both dark
 species keep a Maxwell-Boltzmann shape and tracks only three numbers:
 
-    u = [ln n_chi, ln n_A, ln T_hidden]
+    u = [ln n_chi, ln n_ZD, ln T_hidden]
 
-as functions of x = m_chi / T. That is the standard treatment, and it is
-exactly what the phase-space solver must reproduce in the regime where kinetic
-equilibrium actually holds.
+as functions of x = m_chi / T.
 
 The hidden-sector temperature T_hidden is a genuine dynamical variable here,
-not assumed equal to the SM temperature T: `dTh_dt_rel` evolves it from the
-energy balance of annihilation, decay and elastic transfer. Set
-`params["no_Th_evolution"] = True` to pin T_hidden = T instead.
+not assumed equal to the SM temperature T.
 
 
 Params dictionary
 -----------------
-Required : mchi, mA, gchi, gA, sv_xxAA, sv_xxee, gamma_Aee, alphaD, epsilon
-           (sv_* may be a scalar or a callable of temperature)
-Optional : t_dep, include_hs_in_H, no_Th_evolution, elastic, delta_dxdt,
-           max_abs_dlnydx
+Required : mchi, mZD, gchi, gZD, epsilon
+           sv_xxZDZD, sv_xxee, sv_xxWW : <sigma v> for chi chibar -> Z_D Z_D,
+               -> f fbar (summed over f) and -> W+ W-; each a scalar or a
+               callable of temperature.
+           gamma_ZDff : total Z_D -> f fbar width [GeV] (`model.gammaZD_allf_mixing`)
+           gamma_T   : momentum-exchange rate gamma(T) [GeV] for chi scattering
+               off the SM bath, scalar or callable of T. Required when elastic=True.
+Optional : t_dep, include_hs_in_H, no_Th_evolution, elastic (default True),
+           delta_dxdt, max_abs_dlnydx,
+           xxff_forward_at_Th (default True, see `_number_collision_terms`),
+           in_medium_eps_eff (thermal correction to Z_D <-> f fbar, see
+               `in_medium.cbe_decay_factors`)
 """
 
 import numpy as np
-from mpmath import zeta
 from scipy.integrate import solve_ivp
 from scipy.special import kve
 
-from dphase.constants import ALPHA_EM, ME, VAL_FLOOR
+from dphase.constants import VAL_FLOOR
+from dphase.in_medium import cbe_decay_factors
 from dphase.cosmology import (
     H_of_T,
     dln_gstars_SM_dlnT,
     ln_neq,
-    neq_stable,
     safe_exp,
 )
 
 
 def dx_dt(T, H, m, t_dep = True, delta = 1e-6):
-    """dx/dt for x = mchi / T."""
+    """
+    dx/dt for x = m / T, including the change in g_{*s}.
+
+    Entropy conservation gives a T g_{*s}^{1/3} = const, so
+
+        dx/dt = H x / [1 + (1/3) d ln g_{*s} / d ln T],
+
+    which reduces to H x when g_{*s} is constant.
+
+    Parameters
+    ----------
+    T     : SM temperature [GeV]
+    H     : Hubble rate at T [GeV]
+    m     : mass defining x, normally m_chi [GeV]
+    t_dep : include d ln g_{*s} / d ln T; if False the correction is dropped
+    delta : relative step in T for the finite-difference derivative
+
+    Returns
+    -------
+    dx/dt [GeV]
+    """
     x = m / T
     corr = 1.0 + (1.0/3.0) * dln_gstars_SM_dlnT(T, t_dep, delta)
     return H * x / corr
 
 
 def rho_i_exact(n_i, m_i, Th):
-    # source: 2504.00077, eqn 2.15
+    """
+    Exact energy density of a Maxwell-Boltzmann species at temperature Th,
+
+        rho_i = n_i [ m_i K_1(z)/K_2(z) + 3 Th ],   z = m_i / Th,
+
+    i.e. n_i times the mean energy per particle. Valid at any z.
+
+    Parameters
+    ----------
+    n_i : number density [GeV^3]
+    m_i : mass [GeV]
+    Th  : hidden-sector temperature [GeV]
+
+    Returns
+    -------
+    rho_i [GeV^4]
+    """
     Th   = np.maximum(Th, VAL_FLOOR)        # avoid z = inf / division by zero
     z    = m_i / Th
-    # Use scaled Kv: Kv(z) = e^{-z} kve(order, z);  ratio is stable as kve(1)/kve(2)
+    # Use scaled Kv: Kv(z) = e^{-z} kve(order, z).
     k2   = kve(2, z)
     ratio = kve(1, z) / np.maximum(k2, VAL_FLOOR)
     return n_i * (m_i * ratio + 3.0 * Th)
 
 def P_i_exact(n_i, Th):
-    # source: 2504.00077, eqn 2.15
-    # MB equation of state is ideal-gas exactly: P = n T
+    """
+    Exact pressure of a Maxwell-Boltzmann species. The MB equation of state
+    is exactly the ideal gas, P = n T, for any mass.
+
+    Parameters
+    ----------
+    n_i : number density [GeV^3]
+    Th  : hidden-sector temperature [GeV]
+
+    Returns
+    -------
+    P_i [GeV^4]
+    """
     return n_i * Th
 
 
@@ -69,14 +119,30 @@ def _R(z):
 
     Computed from the exponentially scaled kve so that the e^{-z} factors
     cancel exactly instead of underflowing at large z.
+
+    Parameters
+    ----------
+    z : m / T, scalar or array
+
+    Returns
+    -------
+    K_1(z) / K_2(z), same shape as z
     """
     return kve(1, z) / kve(2, z)
 
 def _dR_dz(z, rel_step=1e-6):
     """
-    dR/dz by centered difference. Enters the hidden-sector heat capacity in
-    `dTh_dt_rel`; done numerically because the closed form needs K_0 as well
-    and buys nothing at this accuracy.
+    dR/dz for R(z) = K_1(z)/K_2(z), by centered finite difference. Enters
+    the hidden-sector heat capacity (`heat_capacity_i`).
+
+    Parameters
+    ----------
+    z        : m / T, scalar or array
+    rel_step : relative step in z (with an absolute floor of 1e-6)
+
+    Returns
+    -------
+    dR/dz, same shape as z
     """
     dz = np.maximum(rel_step * z, 1e-6)
     Rp = kve(1, z+dz)/kve(2, z+dz)
@@ -84,167 +150,295 @@ def _dR_dz(z, rel_step=1e-6):
     return (Rp - Rm) / (2.0*dz)
 
 
-def dTh_dt_rel(nchi, nA, Th, mchi, mA, H, rhoh, Ph, Qh, dnchi_dt, dnA_dt):
+def heat_capacity_i(n_i, m_i, Th):
+    """
+    Heat capacity of one MB species at fixed number density,
+
+        d rho_i / d T_h |_{n_i} = n_i [3 - z^2 R'(z)],   z = m_i / T_h,
+
+    from differentiating rho_i = n_i (m_i R(z) + 3 T_h).
+
+    Parameters
+    ----------
+    n_i : number density [GeV^3]
+    m_i : mass [GeV]
+    Th  : hidden-sector temperature [GeV]
+
+    Returns
+    -------
+    d rho_i / d T_h [GeV^3]
+    """
+    z = m_i / np.maximum(Th, VAL_FLOOR)
+    return n_i * (3.0 - z*z*_dR_dz(z))
+
+
+def dTh_dt_rel(nchi, nZD, Th, mchi, mZD, H, rhoh, Ph, Qh, dnchi_dt, dnZD_dt):
+    """
+    dT_h/dt from hidden-sector energy conservation.
+
+    The hidden sector obeys d rho_h/dt = -3 H (rho_h + P_h) + Q_h. Writing
+    rho_h = sum_i n_i h_i(T_h), with h_i = m_i R(z_i) + 3 T_h the mean energy
+    per particle, and separating the change in composition from the change
+    in temperature gives
+
+        dT_h/dt = [ Q_h - sum_i h_i dn_i/dt - 3 H (rho_h + P_h) ] / C_h,
+
+    where C_h = sum_i d rho_i / d T_h at fixed n_i. The chi terms are doubled for chi + chibar;
+    nchi is the chi density alone.
+
+    Parameters
+    ----------
+    nchi, nZD          : number densities [GeV^3]
+    Th                 : hidden-sector temperature [GeV]
+    mchi, mZD          : masses [GeV]
+    H                  : Hubble rate [GeV]
+    rhoh, Ph           : hidden-sector energy density and pressure [GeV^4]
+    Qh                 : energy injection rate into the hidden sector [GeV^5],
+                         from `collisions`
+    dnchi_dt, dnZD_dt  : total dn/dt for each species, including the -3 H n
+                         dilution [GeV^4]
+
+    Returns
+    -------
+    dT_h/dt [GeV^2]
+    """
     zc = mchi /np.maximum(Th, 1e-300)
-    zA = mA   / np.maximum(Th, 1e-300)
+    zZD = mZD   / np.maximum(Th, 1e-300)
 
     Rchi = _R(zc)
-    RA = _R(zA)
-    dRchi_dz = _dR_dz(zc)
-    dRA_dz = _dR_dz(zA)
+    RZD = _R(zZD)
 
-    # h_i
+    # hidden-sector energies per particle
     h_chi = mchi * Rchi + 3.0 * Th
-    h_A   = mA   * RA   + 3.0 * Th
+    h_ZD   = mZD   * RZD   + 3.0 * Th
 
-    # C_h = sum n_i [ 3 - z_i^2 dR/dz ] HEAT CAPACITY at constant composition
-    # multiply the chi contribution by 2 to account for both chi and anti-chi
-    Ch = 2.0 * nchi * (3.0 - zc*zc * dRchi_dz) + nA * (3.0 - zA*zA * dRA_dz)
+    # C_h: heat capacity at constant composition
+    # multiply the chi contribution by 2 to account for chi and chi-bar
+    Ch = 2.0 * heat_capacity_i(nchi, mchi, Th) + heat_capacity_i(nZD, mZD, Th)
     Ch = max(Ch, 1e-300)
 
-    numer = Qh - (2.0* h_chi * dnchi_dt + h_A * dnA_dt) - 3.0 * H * (rhoh + Ph)
+    numer = Qh - (2.0* h_chi * dnchi_dt + h_ZD * dnZD_dt) - 3.0 * H * (rhoh + Ph)
     return numer / Ch
 
 
-def n_rel_fermion_FD(T, g):
-    # relativistic fermion number density
-    return (3.0*float(zeta(3))/(4.0*np.pi**2)) * g * T**3  # g=4 for e+ and e- total
-
-def sigma_mt_chi_e(alphaD, epsilon, mA, T):
-    # momentum-transfer xsec w/ thermal screening
-    q2 = 3.0*ME*T
-    denom = (mA*mA + q2)**2
-    return 16.0*np.pi*alphaD*ALPHA_EM*(epsilon**2)/denom
-
-def gamma_kin(alphaD, epsilon, mA, mchi, T):
-    # per-chi kinetic coupling rate
-    ne = n_rel_fermion_FD(T, g=4.0) # 4 dof because I include e+ and e-
-    return (2.0*ME/mchi) * ne * sigma_mt_chi_e(alphaD, epsilon, mA, T)
-
-
 def _sv(value, T):
-    """Cross section entries may be a constant or a callable of temperature."""
+    """
+    Evaluate a params entry that may be a constant or a callable of
+    temperature (cross sections, gamma_T).
+
+    Parameters
+    ----------
+    value : scalar, or callable T -> scalar
+    T     : temperature to evaluate a callable at [GeV]
+
+    Returns
+    -------
+    value(T) if callable, else value
+    """
     return value(T) if callable(value) else value
 
 
-def _number_collision_terms(params, nchi, nA, T, Th, svxxAA_temp="HS"):
+def _in_medium_factors(params, T, Th):
+    """
+    Thermal in-medium factors for the Z_D <-> f fbar decay terms, from
+    `in_medium.cbe_decay_factors`. Returns early with all ones when the
+    correction is off.
+
+    Parameters
+    ----------
+    params : cBE parameter dict; reads params["in_medium_eps_eff"]
+    T      : SM temperature [GeV]
+    Th     : hidden-sector temperature [GeV]
+
+    Returns
+    -------
+    (r_dec_gain, r_dec_loss, r_E_gain, r_E_loss): the gain (inverse decay)
+    factors multiply the terms thermal at T, the loss (decay) factors those
+    thermal at Th. r_dec scales the number equation, r_E the energy injection.
+    """
+    if not params.get("in_medium_eps_eff", False):
+        return 1.0, 1.0, 1.0, 1.0
+    return cbe_decay_factors(params, T, Th)
+
+
+def _number_collision_terms(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     """
     Collision terms for the two number densities, shared by `collisions` and
     `collisions_noTh`.
 
-        C_chi = -<sv>_xxAA (n_chi^2 - B) - <sv>_xxee (n_chi^2 - n_chi,eq^2)
-        C_A   = +2 <sv>_xxAA (n_chi^2 - B)
-                - Gamma_Aee (n_A <m/E>_Th - n_A,eq <m/E>_T)
+    chi chibar <-> SM has its two directions in different baths: the forward
+    annihilation is a hidden-sector pair, thermal at T_h, while the inverse
+    is an SM pair, thermal at T.
 
-    B is the detailed-balance factor (n_chi,eq^Th / n_A,eq^Th)^2 n_A^2, which
-    is what makes chi chibar <-> AA relax to the hidden-sector equilibrium at
-    T_hidden rather than to the SM one.
-
-    The factor of 2 on the first C_A term counts the two dark photons produced
+    The factor of 2 on the first C_ZD term counts the two dark photons produced
     per annihilation. <m/E> = K_1(z)/K_2(z) is the thermally averaged time
-    dilation that slows the A decay.
+    dilation; with params["in_medium_eps_eff"] the two decay directions are also
+    multiplied by the in-medium factors.
 
-    `svxxAA_temp` selects the temperature at which the dark-sector
-    annihilation cross section is evaluated: "HS" for T_hidden (both
-    incoming legs are dark) or anything else for the SM T, for comparison.
+    Parameters
+    ----------
+    params        : cBE parameter dict
+    nchi, nZD     : number densities [GeV^3]; nchi is chi alone, not chi + chibar
+    T, Th         : SM and hidden-sector temperatures [GeV]
+    svxxZDZD_temp : temperature at which the dark-sector annihilation cross
+                    section is evaluated: "HS" for T_hidden (both incoming
+                    legs are dark) or anything else for the SM T, for comparison
 
     Returns
     -------
-    C_chi, C_A, nchi_eq_SM, nA_eq_SM
+    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM, sv_SM, sv_HS
+    with sv_SM / sv_HS = (<sv>_ff + <sv>_WW) at T and at the forward temperature.
     """
-    mchi, mA = params["mchi"], params["mA"]
-    gchi, gA = params["gchi"], params["gA"]
+    mchi, mZD = params["mchi"], params["mZD"]
+    gchi, gZD = params["gchi"], params["gZD"]
 
-    sv_xxAA = _sv(params["sv_xxAA"], Th if svxxAA_temp == "HS" else T)
-    sv_xxee = _sv(params["sv_xxee"], T)
-    gamma_Aee = params["gamma_Aee"]
+    sv_xxZDZD = _sv(params["sv_xxZDZD"], Th if svxxZDZD_temp == "HS" else T)
+
+    # chi chibar -> SM: inverse at T, forward at T_h
+    T_fwd = Th if params.get("xxff_forward_at_Th", True) else T
+    sv_xxff_SM = _sv(params["sv_xxee"], T)
+    sv_xxWW_SM = _sv(params["sv_xxWW"], T)
+    sv_xxff_HS = _sv(params["sv_xxee"], T_fwd)
+    sv_xxWW_HS = _sv(params["sv_xxWW"], T_fwd)
+    gamma_ZDff = params["gamma_ZDff"]
 
     # Detailed balance in log space:
-    #   ln B = 2 (ln n_chi,eq^Th - ln n_A,eq^Th) + 2 ln n_A
-    ln_balance = (2.0 * (ln_neq(mchi, gchi, Th) - ln_neq(mA, gA, Th))
-                  + 2.0 * np.log(max(nA, VAL_FLOOR)))
+    #   ln B = 2 (ln n_chi,eq^Th - ln n_ZD,eq^Th) + 2 ln n_ZD
+    ln_balance = (2.0 * (ln_neq(mchi, gchi, Th) - ln_neq(mZD, gZD, Th))
+                  + 2.0 * np.log(max(nZD, VAL_FLOOR)))
     balance = safe_exp(ln_balance)          # underflows cleanly to 0
 
     nchi_eq_SM = safe_exp(ln_neq(mchi, gchi, T))
-    nA_eq_SM = safe_exp(ln_neq(mA, gA, T))
+    nZD_eq_SM = safe_exp(ln_neq(mZD, gZD, T))
 
-    # Time dilation <m/E> = K1/K2, at the hidden and the SM temperature.
-    lorentz_HS = _R(mA / np.maximum(Th, VAL_FLOOR))
-    lorentz_SM = _R(mA / np.maximum(T, VAL_FLOOR))
+    # Time dilation <m/E> = K1/K2, at the hidden and the SM temperature,
+    # times the in-medium factors (all 1 unless in_medium_eps_eff).
+    r_dec_gain, r_dec_loss, _, _ = _in_medium_factors(params, T, Th)
+    lorentz_HS = _R(mZD / np.maximum(Th, VAL_FLOOR)) * r_dec_loss
+    lorentz_SM = _R(mZD / np.maximum(T, VAL_FLOOR)) * r_dec_gain
 
-    C_chi = (-sv_xxAA * (nchi**2 - balance)
-             - sv_xxee * (nchi**2 - nchi_eq_SM**2))
-    C_A = (2.0 * sv_xxAA * (nchi**2 - balance)
-           - gamma_Aee * (nA * lorentz_HS - nA_eq_SM * lorentz_SM))
+    hs = sv_xxZDZD * (nchi**2 - balance)
+    ann_ff = sv_xxff_HS * nchi**2 - sv_xxff_SM * nchi_eq_SM**2
+    ann_WW = sv_xxWW_HS * nchi**2 - sv_xxWW_SM * nchi_eq_SM**2
+    dec = gamma_ZDff * (nZD * lorentz_HS - nZD_eq_SM * lorentz_SM)
 
-    return C_chi, C_A, nchi_eq_SM, nA_eq_SM
+    C_chi = -hs - ann_ff - ann_WW
+    C_ZD = 2.0 * hs - dec
+
+    return (C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM,
+            sv_xxff_SM + sv_xxWW_SM, sv_xxff_HS + sv_xxWW_HS)
 
 
-def collisions(params, nchi, nA, T, Th, svxxAA_temp="HS"):
+def collisions(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     """
     Full collision terms: number densities and the hidden-sector energy
     injection Q_h that drives dT_hidden/dt.
 
     The three energy channels are
 
-        Q_ann : annihilation to SM fermions removes rest mass m_chi per event
-        Q_dec : A decay removes rest mass m_A per event.
-        Q_el  : elastic chi-e scattering drives T_hidden towards T, and
-                vanishes when they are equal.
+        Q_ann : chi chibar <-> f fbar, W+ W-. Each forward annihilation
+                removes the mean energy of a hidden-sector pair, thermal at
+                T_h; each inverse event injects that of a pair produced from
+                the SM bath, which by detailed balance has the equilibrium
+                spectrum at T.
+        Q_dec : Z_D decay removes energy m_ZD per decay in the rest frame; the
+                <m/E> time dilation cancels against <E> = m_ZD <E/m>.
+        Q_el  : elastic chi f -> chi f drives T_hidden towards T,
+                3 gamma(T) n_chi (T - T_h), with gamma from params["gamma_T"].
+                Switched off by params["elastic"] = False.
+
+    Parameters
+    ----------
+    Same as `_number_collision_terms`.
 
     Returns
     -------
-    C_chi, C_A, Q_h, Q_ann, Q_dec, Q_el, Gkin
+    C_chi, C_ZD   : number-density collision terms [GeV^4]
+    Q_h           : total energy injection Q_ann + Q_dec + Q_el [GeV^5]
+    Q_ann, Q_dec, Q_el : the individual channels above [GeV^5]
+    Gkin          : gamma(T) used for Q_el [GeV]; 0 if elastic is off
     """
-    mchi, mA = params["mchi"], params["mA"]
-    alphaD, epsilon = params["alphaD"], params["epsilon"]
+    mchi, mZD = params["mchi"], params["mZD"]
 
-    C_chi, C_A, nchi_eq_SM, nA_eq_SM = _number_collision_terms(
-        params, nchi, nA, T, Th, svxxAA_temp)
+    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM, sv_SM, sv_HS = _number_collision_terms(
+        params, nchi, nZD, T, Th, svxxZDZD_temp)
 
-    sv_xxee = _sv(params["sv_xxee"], T)
-    Q_ann = -mchi * sv_xxee * (nchi**2 - nchi_eq_SM**2)
-    Q_dec = -mA * params["gamma_Aee"] * (nA - nA_eq_SM)
+    # energy injection; in-medium factors are all 1 unless in_medium_eps_eff
+    _, _, r_E_gain, r_E_loss = _in_medium_factors(params, T, Th)
+    Q_dec = -mZD * params["gamma_ZDff"] * (nZD * r_E_loss - nZD_eq_SM * r_E_gain)
 
-    if params.get("elastic", False):
-        Gkin = gamma_kin(alphaD, epsilon, mA, mchi, T)
-        rhoh = 2*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
-        Ph = 2*P_i_exact(nchi, Th) + P_i_exact(nA, Th)
-        Q_el = Gkin * (rhoh + Ph) * (T - Th) / max(Th, VAL_FLOOR)
+    # mean chi energy of the annihilating (HS, T_h) and produced (SM, T) pairs
+    eps_bar_HS = mchi * _R(mchi / np.maximum(Th, VAL_FLOOR)) + 3.0 * Th
+    eps_bar_SM = mchi * _R(mchi / np.maximum(T, VAL_FLOOR)) + 3.0 * T
+    Q_ann = -2.0 * (eps_bar_HS * sv_HS * nchi**2
+                    - eps_bar_SM * sv_SM * nchi_eq_SM**2)
+
+    if params.get("elastic", True):
+        gamma_T = params.get("gamma_T", params.get("gamma_el", None))
+        if gamma_T is None:
+            raise KeyError("elastic=True requires params['gamma_T'] (or 'gamma_el')")
+        Gkin = float(_sv(gamma_T, T))
+        # only chi scatters off the SM bath; Z_D does not.
+        Q_el = 3.0 * Gkin * (T - Th) * nchi
     else:
         Gkin = 0.0
         Q_el = 0.0
 
-    return C_chi, C_A, Q_ann + Q_dec + Q_el, Q_ann, Q_dec, Q_el, Gkin
+    return C_chi, C_ZD, Q_ann + Q_dec + Q_el, Q_ann, Q_dec, Q_el, Gkin
 
 
-def collisions_noTh(params, nchi, nA, T, Th, svxxAA_temp="HS"):
+def collisions_noTh(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     """
-    Number-density collision terms only, for runs with T_hidden pinned to T.
-    Skips the energy bookkeeping, which is unused in that mode.
+    Number-density collision terms only, without the energy injection. Used
+    when params["no_Th_evolution"] is True, so T_hidden is pinned to T and
+    Q_h is not needed.
+
+    Parameters
+    ----------
+    Same as `_number_collision_terms`.
+
+    Returns
+    -------
+    C_chi, C_ZD : number-density collision terms [GeV^4]
     """
-    C_chi, C_A, _, _ = _number_collision_terms(
-        params, nchi, nA, T, Th, svxxAA_temp)
-    return C_chi, C_A
+    C_chi, C_ZD = _number_collision_terms(
+        params, nchi, nZD, T, Th, svxxZDZD_temp)[:2]
+    return C_chi, C_ZD
 
 
 # ----------------------------
 # x-domain RHS: d/dx = (1/(dx/dt)) d/dt
 # ----------------------------
-def rhs_logx(x, u, params, svxxAA_temp = "HS"):
+def rhs_logx(x, u, params, svxxZDZD_temp = "HS"):
     """
-    log-space RHS:
-      u = [ln n_chi, ln n_Ap, ln Th]. returns d/dx of those logs
+    Right-hand side for `solve_ivp`: d/dx of u = [ln n_chi, ln n_ZD, ln T_h].
+
+    Each step evaluates H, the collision terms, dn/dt = -3 H n + C and dT_h/dt (`dTh_dt_rel`),
+    then converts to x with d/dx = (dx/dt)^{-1} d/dt. Each log-derivative is clipped
+    to +- params["max_abs_dlnydx"] to keep stiff steps finite. With
+    params["no_Th_evolution"], T_h = T and d ln T_h/dx = -1/x.
+
+    Parameters
+    ----------
+    x             : m_chi / T
+    u             : [ln n_chi, ln n_ZD, ln T_h], densities in GeV^3,
+                    T_h in GeV; n_chi is chi alone, not chi + chibar
+    params        : cBE parameter dict
+    svxxZDZD_temp : passed through to `_number_collision_terms`
+
+    Returns
+    -------
+    array [d ln n_chi/dx, d ln n_ZD/dx, d ln T_h/dx]
     """
 
-    mchi = params["mchi"];  mA = params["mA"]
+    mchi = params["mchi"];  mZD = params["mZD"]
     t_dep = params.get("t_dep", True)
     include_h = params.get("include_hs_in_H", True)
     T    = mchi / x  # SM temperature
 
-    ln_nchi, ln_nA, ln_Th  = u
-    nchi = safe_exp(ln_nchi) # represents nchi ONLY (not nchi + bar_nchi)
-    nA   = safe_exp(ln_nA)
+    ln_nchi, ln_nZD, ln_Th  = u
+    nchi = safe_exp(ln_nchi) # represents chi population ONLY (not nchi + bar_nchi)
+    nZD   = safe_exp(ln_nZD)
 
     # Prevent pathologies when stiff steps push logs to extreme values.
     ln_min_Th = np.log(VAL_FLOOR)
@@ -257,147 +451,81 @@ def rhs_logx(x, u, params, svxxAA_temp = "HS"):
         Th = safe_exp(ln_Th)
 
     # HS energy density and pressure
-    # multiply the chi contributions by 2 to account for both chi and anti-chi
-    rhoh = 2.0*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
-    Ph = 2.0*P_i_exact(nchi, Th) + P_i_exact(nA, Th)
+    # multiply by 2 to account for both chi and chi-bar
+    rhoh = 2.0*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nZD, mZD, Th)
+    Ph = 2.0*P_i_exact(nchi, Th) + P_i_exact(nZD, Th)
 
     # Hubble and x-dot
     delta = params.get("delta_dxdt", 1e-2)
     H    = H_of_T(T, rhoh if include_h else 0.0, t_dep = t_dep)
     xdot = dx_dt(T, H, m = mchi, t_dep = t_dep, delta = delta)
 
-    # collisions
+    # Collisions
     if params.get("no_Th_evolution", False):
-        C_chi, C_A = collisions_noTh(params, nchi, nA, T, Th, svxxAA_temp= svxxAA_temp)
+        C_chi, C_ZD = collisions_noTh(params, nchi, nZD, T, Th, svxxZDZD_temp= svxxZDZD_temp)
         Qh = 0.0
     else:
-        C_chi, C_A, Qh, _, _, _, _ = collisions(params, nchi, nA, T, Th, svxxAA_temp = svxxAA_temp)
+        C_chi, C_ZD, Qh, _, _, _, _ = collisions(params, nchi, nZD, T, Th, svxxZDZD_temp = svxxZDZD_temp)
 
-    # Time derivatives for number rxns
+    # Time derivatives for number-changing processes
     dnchi_dt = -3.0 * H * nchi + C_chi
-    dnA_dt   = -3.0 * H * nA   + C_A
+    dnZD_dt   = -3.0 * H * nZD   + C_ZD
 
     if params.get("no_Th_evolution", False):
         dTh_dt = - Th * xdot / x
     else:
-        dTh_dt = dTh_dt_rel(nchi, nA, Th, mchi, mA, H, rhoh, Ph, Qh, dnchi_dt, dnA_dt)
+        dTh_dt = dTh_dt_rel(nchi, nZD, Th, mchi, mZD, H, rhoh, Ph, Qh, dnchi_dt, dnZD_dt)
 
     dnchi_dx = dnchi_dt /xdot
-    dnA_dx   = dnA_dt   /xdot
+    dnZD_dx   = dnZD_dt   /xdot
     dTh_dx   = dTh_dt   /xdot
 
     # Return log-derivatives
     dln_nchi_dx = dnchi_dx / np.maximum(nchi, VAL_FLOOR)
-    dln_nA_dx   = dnA_dx / np.maximum(nA, VAL_FLOOR)
+    dln_nZD_dx   = dnZD_dx / np.maximum(nZD, VAL_FLOOR)
     dln_Th_dx   = dTh_dx / np.maximum(Th, VAL_FLOOR)
 
     # Clip log-derivatives
     clip = float(params.get("max_abs_dlnydx", 1e8))
     dln_nchi_dx = np.clip(dln_nchi_dx, -clip, clip)
-    dln_nA_dx   = np.clip(dln_nA_dx,   -clip, clip)
+    dln_nZD_dx   = np.clip(dln_nZD_dx,   -clip, clip)
     dln_Th_dx   = np.clip(dln_Th_dx,   -clip, clip)
 
     if params.get("no_Th_evolution", False):
         dln_Th_dx = -1/x
 
-    return np.array([dln_nchi_dx, dln_nA_dx, dln_Th_dx])
+    return np.array([dln_nchi_dx, dln_nZD_dx, dln_Th_dx])
 
 
-def compute_diagnostics(xs, sol_y, params):
+
+def evolve(params, x_initial, x_final, y0, xs, rtol = 1e-7, atol=1e-14,
+            method = 'Radau', svxxZDZD_temp = 'HS', max_step = None):
     """
-    Post-process a solution into rate ratios, for reading off *why* the
-    abundance came out as it did.
+    Integrate the cBE from x_initial to x_final, output at `xs`. The
+    integration is done in u = ln y (see `rhs_logx`), which keeps the
+    densities positive across many decades.
 
-    Every returned rate is divided by H, so the value 1 marks the point where
-    that process decouples
+    Parameters
+    ----------
+    params             : cBE parameter dict (see module docstring)
+    x_initial, x_final : integration range in x = m_chi / T
+    y0                 : initial [n_chi, n_ZD, T_h], all finite and > 0
+    xs                 : x values at which to return the solution
+    rtol, atol         : solver tolerances
+    method             : `solve_ivp` method
+    svxxZDZD_temp      : passed through to `_number_collision_terms`
+    max_step           : cap on the solver step in x.
+
     Returns
     -------
-    dict of arrays over `xs`, plus the `params` used.
+    dict with "sol", shape (3, len(x_arr)), rows n_chi, n_ZD, T_h, and
+    "x_arr", the x values
     """
-    ln_nchi, ln_nA, ln_Th = sol_y
-    nchi = safe_exp(ln_nchi)
-    nA = safe_exp(ln_nA)
-    Th = safe_exp(ln_Th)
+    if max_step is None:
+        # resolve resonance when in-medium effects are considered
+        max_step = (0.005 * params["mchi"] / params["mZD"]
+                    if params.get("in_medium_eps_eff", False) else np.inf)
 
-    mchi, mA = params["mchi"], params["mA"]
-    gchi, gA = params["gchi"], params["gA"]
-    gammaA = params["gamma_Aee"]
-    t_dep = params.get("t_dep", True)
-    include_h = params.get("include_hs_in_H", True)
-
-    T = mchi / xs
-    sv_xxAA = _sv(params["sv_xxAA"], Th)
-    sv_xxee = _sv(params["sv_xxee"], T)
-
-    # HS thermodynamics
-    rhoh = 2.0*rho_i_exact(nchi, mchi, Th) + rho_i_exact(nA, mA, Th)
-    H    = H_of_T(T, rhoh if include_h else 0.0, t_dep = t_dep)
-
-
-    # Equilibria at HS temperature
-    nxeq_Th = neq_stable(mchi, gchi, Th)
-    naeq_Th = neq_stable(mA,   gA,   Th)
-
-    # Per-particle reaction rates (no cancellation) -
-    Gamma_xAA_over_H = (sv_xxAA * nchi) / H
-    Gamma_xSM_over_H = (sv_xxee * nchi) / H
-    lorentz = _R(mA / np.maximum(Th, VAL_FLOOR))    # <m/E>, time dilation
-    Gamma_Adec_over_H = (gammaA * lorentz) / H
-
-    Cchi    = np.empty_like(xs)
-    CA      = np.empty_like(xs)
-    Qh      = np.empty_like(xs)
-    Q_ann   = np.empty_like(xs)
-    Q_dec   = np.empty_like(xs)
-    Q_el    = np.empty_like(xs)
-    Gkin    = np.empty_like(xs)
-
-    for i in range(xs.size):
-        Cchi[i], CA[i], Qh[i], Q_ann[i], Q_dec[i], Q_el[i], Gkin[i] = collisions(
-            params, nchi[i], nA[i], T[i], Th[i]
-        )
-
-    Gamma_chem_over_H = np.abs(Cchi) / (H * np.maximum(np.abs(nchi - nxeq_Th), VAL_FLOOR))
-
-    # --- energy-transfer diagnostics ---
-    try:
-        rhoh_floor = np.maximum(rhoh, VAL_FLOOR)
-        Q_ann_over_Hrho = np.abs(Q_ann) / (H * rhoh_floor)
-        Q_dec_over_Hrho = np.abs(Q_dec) / (H * rhoh_floor)
-        Q_el_over_Hrho  = np.abs(Q_el)  / (H * rhoh_floor)
-
-        Gamma_el_over_H = np.abs(Gkin) / np.maximum(H, VAL_FLOOR)
-        Q_total_over_Hrho = np.abs(Qh) / (H * rhoh_floor)
-    except (FloatingPointError, ZeroDivisionError, ValueError):
-        Q_ann_over_Hrho = np.zeros_like(xs)
-        Q_dec_over_Hrho = np.zeros_like(xs)
-        Q_el_over_Hrho  = np.zeros_like(xs)
-        Gamma_el_over_H = np.zeros_like(xs)
-        Q_total_over_Hrho = np.zeros_like(xs)
-
-    return {
-        "x": xs, "T": T, "Th": Th, "H": H,
-        # number-changing rates
-        "Gamma_xAA_over_H": Gamma_xAA_over_H,
-        "Gamma_xSM_over_H": Gamma_xSM_over_H,
-        "Gamma_Adec_over_H": Gamma_Adec_over_H,
-        "Gamma_chem_over_H": Gamma_chem_over_H,
-        "nchi_over_nchieq": nchi / np.maximum(nxeq_Th, VAL_FLOOR),
-        "nA_over_nAeq":     nA   / np.maximum(naeq_Th, VAL_FLOOR),
-
-        # energy stuff
-        "Q_ann_over_Hrho": Q_ann_over_Hrho,
-        "Q_dec_over_Hrho": Q_dec_over_Hrho,
-        "Q_el_over_Hrho":  Q_el_over_Hrho,
-        "Gamma_el_over_H": Gamma_el_over_H,
-        "Q_total_over_Hrho": Q_total_over_Hrho,
-        "params": params,
-    }
-
-
-
-def evolve(params, x_initial, x_final, y0, xs, log_space = True, rtol = 1e-7, atol=1e-14,
-            method = 'Radau', svxxAA_temp = 'HS'):
     def _solve(fun, t_span, y_init, args, t_eval, meth, rt, at):
         # Stiff solvers evaluate numerical Jacobians with tiny perturbations;
         # allow harmless fp over/underflow there instead of raising.
@@ -411,50 +539,38 @@ def evolve(params, x_initial, x_final, y0, xs, log_space = True, rtol = 1e-7, at
                 method=meth,
                 rtol=rt,
                 atol=at,
+                max_step=max_step,
             )
 
-    if log_space:
-        y0 = np.asarray(y0, dtype=float)
-        if np.any(y0 <= 0.0) or np.any(~np.isfinite(y0)):
-            raise ValueError("All initial conditions must be finite and > 0 in log-space mode.")
+    y0 = np.asarray(y0, dtype=float)
+    if np.any(y0 <= 0.0) or np.any(~np.isfinite(y0)):
+        raise ValueError("All initial conditions must be finite and > 0.")
 
-        u0 = np.log(y0)
-        sol = _solve(
+    u0 = np.log(y0)
+    sol = _solve(
+        rhs_logx,
+        (x_initial, x_final),
+        u0,
+        (params, svxxZDZD_temp),
+        xs,
+        method,
+        rtol,
+        atol,
+    )
+
+    if (not sol.success) and ("Required step size is less than spacing between numbers" in str(sol.message)) and (method.upper() != "LSODA"):
+        sol_try = _solve(
             rhs_logx,
             (x_initial, x_final),
             u0,
-            (params, svxxAA_temp),
+            (params, svxxZDZD_temp),
             xs,
-            method,
-            rtol,
-            atol,
+            "LSODA",
+            max(rtol, 1e-6),
+            max(atol, 1e-9),
         )
-
-        if (not sol.success) and ("Required step size is less than spacing between numbers" in str(sol.message)) and (method.upper() != "LSODA"):
-            sol_try = _solve(
-                rhs_logx,
-                (x_initial, x_final),
-                u0,
-                (params, svxxAA_temp),
-                xs,
-                "LSODA",
-                max(rtol, 1e-6),
-                max(atol, 1e-9),
-            )
-            if sol_try.success and np.isfinite(sol_try.y).all():
-                sol = sol_try
-    else:
-        y0 = np.asarray(y0, dtype=float)
-        sol = _solve(
-            rhs_logx,
-            (x_initial, x_final),
-            y0,
-            (params, svxxAA_temp),
-            xs,
-            method,
-            rtol,
-            atol,
-        )
+        if sol_try.success and np.isfinite(sol_try.y).all():
+            sol = sol_try
 
     if not sol.success:
         raise RuntimeError(f"Integration failed: {sol.message}")
@@ -462,15 +578,7 @@ def evolve(params, x_initial, x_final, y0, xs, log_space = True, rtol = 1e-7, at
     if not np.isfinite(sol.y).all():
         raise RuntimeError(
             "Integration produced non-finite values. "
-            "Try lowering stiffness (set params['Gamma_H_max'], e.g. 20-100) "
-            "or relax tolerances / adjust initial conditions."
+            "Try relaxing tolerances or adjusting initial conditions."
         )
 
-    x_arr = sol.t
-    diag = compute_diagnostics(x_arr, sol.y, params)
-
-    if log_space:
-        soly = safe_exp(sol.y)
-    else:
-        soly = sol.y
-    return {"sol": soly, "x_arr": x_arr, "diag": diag}
+    return {"sol": safe_exp(sol.y), "x_arr": sol.t}

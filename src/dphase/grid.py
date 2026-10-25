@@ -1,5 +1,5 @@
 """
-Comoving momentum grid and the species records that live on it.
+Comoving momentum grid.
 
 The solver works in comoving momentum ptilde = a(t) p, which is constant
 under free expansion. That choice removes the redshift drift term from the
@@ -7,7 +7,7 @@ Boltzmann equation: with ptilde as the coordinate, a free-streaming
 distribution is static, and every df/dt the solver computes is a
 genuine collision effect.
 
-The price is that collision rates depend on physical momentum, so every
+The cost is that collision rates depend on physical momentum, so every
 kernel has to be rebuilt at each temperature -- see `PhaseSpaceGrid.p_phys`
 and the  builders in `dphase.kernels`.
 """
@@ -22,7 +22,7 @@ class PhaseSpaceSpecies:
     One evolving species.
 
     name            : key used to index `PhaseSpaceState.f`. Solver looks
-                      for the literal names "chi" and "A".
+                      for the literal names "chi" and "ZD".
     mass_GeV        : rest mass [GeV]
     dof             : internal degrees of freedom g. Use 2 for chi
                       (2 spin states of the Dirac fermion; the
@@ -40,10 +40,7 @@ class PhaseSpaceSpecies:
 def log_bin_edges(p_centers):
     """
     Bin widths for a log-spaced grid given its centers.
-
     Interior edges are the geometric midpoints between neighboring centers.
-    The two outermost edges are reflected outward so that the first and last
-    bins get a width comparable to their neighbors.
 
     Parameters
     ----------
@@ -63,7 +60,6 @@ def log_bin_edges(p_centers):
     # element-wise averaging of neighboring log-centers
     edges[1:-1] = 0.5 * (logp[1:] + logp[:-1])
 
-    # (edges[1] - edges[0]) = how far the first bin extends below the first center, so reflect that distance outward
     edges[0] = logp[0] - (edges[1] - logp[0])
     edges[-1] = logp[-1] + (logp[-1] - edges[-2])
     return np.diff(edges)
@@ -78,9 +74,7 @@ class PhaseSpaceGrid:
     ptilde_min, ptilde_max : grid extent in comoving momentum [GeV]
     Np                     : number of bins
     T_ref                  : reference temperature, where a = 1 by definition.
-                             Comoving and physical momentum coincide at T_ref,
-                             so choosing T_ref as the initial temperature
-                             makes the initial condition easy to write down.
+                             Comoving and physical momentum coincide at T_ref.
 
     Attributes
     ----------
@@ -126,7 +120,7 @@ class PhaseSpaceGrid:
 
         The comoving centers are fixed for the whole run, so this is where the
         redshifting of momentum by the expansion enters. Every collision term
-        must be evaluated on these physical momenta, NOT on `self.ptilde`.
+        must be evaluated on these physical momenta, not on `self.ptilde`.
 
         Returns
         -------

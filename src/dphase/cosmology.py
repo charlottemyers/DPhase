@@ -55,8 +55,6 @@ def _load_gstar_table(path=None):
 def gstar_interp(T, path=None):
     """
     Linearly interpolate the tabulated g_*(T).
-    Outside the tabulated range NumPy's `interp` clamps to the endpoint
-    values.
 
     NOTE: the provided table has a single g_* column, so this one function
     supplies both the entropy g_{*s} (used by `s_SM`)
@@ -187,15 +185,14 @@ def neq(m, g, T):
 
 def ln_neq(m, g, T):
     """
-    log of the equilibrium number density, evaluated without ever forming the
-    exponentially small number itself:
+    log of the equilibrium number density:
 
         ln n_eq = ln[g m^2 T / (2 pi^2)] - z + ln kve(2, z),   z = m/T
 
     using the exponentially scaled Bessel kve(2, z) = e^{z} K_2(z).
 
-    K_2(m/T) is what the momentum integral of the Maxwell-Boltzmann
-    distribution evaluates to: n_eq = g/(2 pi^2) int dp p^2 exp(-E(p)/T).
+    K_2(m/T) is what the momentum integral of the MB distribution evaluates to:
+    n_eq = g/(2 pi^2) int dp p^2 exp(-E(p)/T).
     """
     z = m / T
     return (np.log(g) + 2 * np.log(m) + np.log(T) - np.log(2 * np.pi**2)
@@ -234,7 +231,7 @@ def relic_abundance(Y_inf, m):
     with the numerical factor being s_0 / rho_crit h^-2 in GeV^-1. The
     observed value is Omega_DM h^2 = 0.120.
 
-    `Y_inf` must count every DM degree of freedom whose mass energy survives
+    `Y_inf` must count every DM degree of freedom that survives
     today: for a Dirac fermion with no asymmetry that is Y_chi + Y_chibar =
     2 Y_chi (see `PhaseSpaceState.total_DM_number_density`).
     """
@@ -243,15 +240,50 @@ def relic_abundance(Y_inf, m):
 
 
 
-def compute_yields_from_snaps(T_vals, mchi, mA, st, snaps, gchi = 2, gA = 3):
+def compute_yields_from_snaps(T_vals, mchi, mZD, st, snaps, gchi = 2, gZD = 3):
+    """
+    Compute the comoving yields and number densities for chi and ZD from snapshots.
+
+    Parameters
+    ----------
+    T_vals : array_like
+        Array of temperatures corresponding to the snapshots.
+    mchi : float
+        Mass of the chi particle.
+    mZD : float
+        Mass of the ZD particle.
+    st : PhaseSpaceState
+        The phase space state object containing the distribution functions.
+    snaps : list of dict
+        List of snapshots, each containing the distribution functions for chi and ZD.
+    gchi : int, optional
+        Internal degrees of freedom for chi.
+    gZD : int, optional
+        Internal degrees of freedom for ZD.
+
+    Returns
+    -------
+    Y_chi : ndarray
+        Comoving yield for chi.
+    Y_ZD : ndarray
+        Comoving yield for ZD.
+    Y_eq_chi : ndarray
+        Equilibrium comoving yield for chi.
+    Y_eq_ZD : ndarray
+        Equilibrium comoving yield for ZD.
+    n_chi_vals : ndarray
+        Number density for chi.
+    n_ZD_vals : ndarray
+        Number density for ZD.
+    """
     x_vals = mchi / T_vals
     Y_chi = np.zeros_like(x_vals, dtype=float)
-    Y_A = np.zeros_like(x_vals, dtype=float)
+    Y_ZD = np.zeros_like(x_vals, dtype=float)
     Y_eq_chi = np.zeros_like(x_vals, dtype=float)
-    Y_eq_A = np.zeros_like(x_vals, dtype=float)
+    Y_eq_ZD = np.zeros_like(x_vals, dtype=float)
 
     n_chi_vals = np.zeros_like(x_vals, dtype=float)
-    n_A_vals = np.zeros_like(x_vals, dtype=float)
+    n_ZD_vals = np.zeros_like(x_vals, dtype=float)
 
     for k, T in enumerate(T_vals):
         snap = snaps[k]
@@ -262,15 +294,15 @@ def compute_yields_from_snaps(T_vals, mchi, mA, st, snaps, gchi = 2, gA = 3):
         Y_chi[k] = n_chi / s_T
         n_chi_vals[k] = n_chi
 
-        st.f["A"] = snap["A"]
-        n_A = st.number_density("A", T)
-        Y_A[k] = n_A / s_T
-        n_A_vals[k] = n_A
+        st.f["ZD"] = snap["ZD"]
+        n_ZD = st.number_density("ZD", T)
+        Y_ZD[k] = n_ZD / s_T
+        n_ZD_vals[k] = n_ZD
 
         n_chi_eq = 2 * neq_stable(m=mchi, g=gchi, T=T)
-        n_A_eq = neq_stable(m=mA, g=gA, T=T)
+        n_ZD_eq = neq_stable(m=mZD, g=gZD, T=T)
 
         Y_eq_chi[k] = n_chi_eq / s_T
-        Y_eq_A[k] = n_A_eq / s_T
+        Y_eq_ZD[k] = n_ZD_eq / s_T
 
-    return Y_chi, Y_A, Y_eq_chi, Y_eq_A, n_chi_vals, n_A_vals
+    return Y_chi, Y_ZD, Y_eq_chi, Y_eq_ZD, n_chi_vals, n_ZD_vals

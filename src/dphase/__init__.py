@@ -3,16 +3,15 @@ DPhase -- phase-space Boltzmann solver for dark photon dark matter.
 
 Solves the momentum-resolved Boltzmann equation for a Dirac fermion chi
 coupled to the Standard Model through a kinetically mixed dark photon Z_D,
-tracking the distribution function f_chi(p, T) rather than the number density
-alone. Covers both freeze-out and freeze-in regimes.
+tracking the distribution function f_chi(p, T).
 
 Two solvers are provided:
 
-  `solve_BE`  -- the phase-space solver. Evolves f_chi(p, T) and f_A(p, T) on
+  `solve_BE`  -- the phase-space solver. Evolves f_chi(p, T) and f_ZD(p, T) on
                  a comoving momentum grid with no assumption that either
                  species keeps a thermal shape.
-  `cbe`       -- the number-density solver, tracking (n_chi, n_A, T_hidden)
-                 under an assumed Maxwell-Boltzmann shape. Much cheaper, and
+  `cbe`       -- the number-density solver, tracking (n_chi, n_ZD, T_hidden)
+                 under an assumed Maxwell-Boltzmann shape. Cheaper, and
                  the baseline the phase-space solver is validated against in
                  the limit where kinetic equilibrium holds.
 
@@ -24,10 +23,10 @@ Basic usage
 >>> import numpy as np
 >>> import dphase
 >>> chi = dphase.PhaseSpaceSpecies(name="chi", mass_GeV=10.0, dof=2.0)
->>> A = dphase.PhaseSpaceSpecies(name="A", mass_GeV=5.0, dof=3.0)
+>>> ZD = dphase.PhaseSpaceSpecies(name="ZD", mass_GeV=5.0, dof=3.0)
 >>> grid = dphase.PhaseSpaceGrid(ptilde_min=0.1, ptilde_max=1e4, Np=120,
 ...                             T_ref=200.0)
->>> state = dphase.PhaseSpaceState(grid, [chi, A])
+>>> state = dphase.PhaseSpaceState(grid, [chi, ZD])
 
 The state must then be populated with couplings and precomputed collision
 kernels before `solve_BE` can run -- see `examples/example.ipynb`.
@@ -36,11 +35,7 @@ kernels before `solve_BE` can run -- see `examples/example.ipynb`.
 __version__ = "0.1.0"
 
 # ---------------------------------------------------------------------------
-# Public API.
-#
-# Only the names below are considered stable. Everything else stays reachable
-# at dphase.collisions.<...>, dphase.model.<...> etc. for anyone who wants the
-# internals, but may be renamed without notice.
+# Public API
 # ---------------------------------------------------------------------------
 
 from .grid import PhaseSpaceGrid, PhaseSpaceSpecies

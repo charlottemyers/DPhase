@@ -27,8 +27,7 @@ def v_moller_from_s_vectorized(s, E1, E2, m):
     This is the flux factor that makes sigma * v_Moller Lorentz invariant, so
     it is the combination that belongs inside a thermal average.
 
-    Broadcasts over array-valued s, E1 and E2. Bins below threshold
-    (lambda <= 0) return exactly 0, so unphysical points drop out of a sum.
+    Bins below threshold (lambda <= 0) return 0, so unphysical points drop out of a sum.
     """
     s = np.asarray(s, dtype=float)
     E1 = np.broadcast_to(E1, s.shape)

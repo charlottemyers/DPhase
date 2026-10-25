@@ -39,14 +39,15 @@ THETA_W = np.arcsin(SIN_THETA_W)
 
 G_SU2 = E_EM / SIN_THETA_W                 # SU(2)_L gauge coupling g
 
-MZ = 91.1876
+MZ = 91.1876                               # Z boson mass [GeV] (PDG)
+MW = 80.377                                # W boson mass [GeV] (PDG)
 GAMMA_Z = 2.4952                           # total Z width, for the s-channel propagator
 
 # ---------------------------------------------------------------------------
 # Numerical guards
 #
 # Shared by `cosmology` and `cbe`, which both work with log-space number
-# densities that underflow during freeze-out.
+# densities that can underflow during freeze-out.
 # ---------------------------------------------------------------------------
 
 LOG_TINY = -500.0        # ~ log(np.finfo(float).tiny); clamp before exp()
@@ -56,6 +57,14 @@ VAL_FLOOR = 1e-170       # positive floor, to keep divisions and logs finite
 # Fallback g_* used when the tabulated temperature dependence is switched off
 # (t_dep=False). 90 is roughly the SM value above the QCD transition.
 GSTAR_S_DEFAULT = 90.0
+
+
+# ---------------------------------------------------------------------------
+# Relevant temperatures for the cosmological evolution
+# ---------------------------------------------------------------------------
+T_EWSB = 160.0     # GeV, electroweak symmetry breaking transition temperature
+T_INITIAL = 150.0  # GeV, the starting temperature for the cosmological evolution, below the EWSB transition
+
 
 # ---------------------------------------------------------------------------
 # SM fermions
@@ -149,11 +158,17 @@ MASSIVE_FERMIONS = {
         "Y_L": 1.0 / 6.0,
         "Y_R": -1.0 / 3.0,
     },
+    "t": {
+        "mass_GeV": 173.0,
+        "Nc": 3,
+        "Q": 2.0 / 3.0,
+        "Q2": 4.0 / 9.0,
+        "T3_L": 0.5,
+        "Y_L": 1.0 / 6.0,
+        "Y_R": 2.0 / 3.0,
+    },
 }
 
-# The top quark is omitted: mt = 173 GeV puts it out of reach for the
-# mchi <~ 100 GeV benchmarks. For the same reason, we exclude gauge boson
-# final states
 
 _NEUTRINOS = {
     name: {

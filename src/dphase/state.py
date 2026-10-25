@@ -1,6 +1,5 @@
 """
-Container for the evolving distribution functions and everything the solver
-needs with them.
+Container for the evolving distribution functions.
 
 `PhaseSpaceState` is a mutable class, populated in two stages:
 
@@ -8,7 +7,7 @@ needs with them.
   2. precomputation -- couplings, the temperature grid, and the collision
                        kernels/caches tabulated on it
 
-Stage 2 is done by hand at the call site (see `example.ipynb`)
+Stage 2 is done by hand (see `example.ipynb`)
 and every attribute it sets is declared in `__init__` below.
 """
 
@@ -24,10 +23,9 @@ class _ZeroDefaultRateGrid:
     A per-temperature rate grid that reads as zeros until it is assigned.
 
     Some rate contributions are identically zero for the DP model, i.e.
-    A f -> A f elastic scattering, whose rate scales as epsilon^4 and is
-    dropped by `kernels.elastic_sm`. Rather than make the caller build and
-    assign an array of zeros, those attributes default to zeros here,
-    so only the non-trivial grids need assigning.
+    Z_D f -> Z_D f elastic scattering, whose rate scales as epsilon^4`.
+    Rather than make the caller build and assign an array of zeros, those
+    attributes default to zeros here, so only the non-trivial grids need assigning.
     """
 
     def __set_name__(self, owner, name):
@@ -62,10 +60,10 @@ class PhaseSpaceState:
 
     # Rate grids that read as zeros until assigned
     gamma_grid_chi = _ZeroDefaultRateGrid()
-    gamma_grid_A = _ZeroDefaultRateGrid()
+    gamma_grid_ZD = _ZeroDefaultRateGrid()
 
     #: names of the attributes above, for `zeroed_rate_grids`
-    _RATE_GRIDS = ("gamma_grid_chi", "gamma_grid_A")
+    _RATE_GRIDS = ("gamma_grid_chi", "gamma_grid_ZD")
 
     def __init__(self, grid: PhaseSpaceGrid, species: list[PhaseSpaceSpecies]):
         # --- set at construction ---
@@ -74,30 +72,39 @@ class PhaseSpaceState:
         self.f = {sp.name: np.zeros_like(grid.ptilde) for sp in species}
 
         # --- model parameters  ---
-        self.epsilon = None                              # kinetic mixing
-        self.alphaD = None                               # dark fine structure constant
+        self.epsilon = None
+        self.alphaD = None
         self.gstar_func = dphase.cosmology.gstar_interp  # g_*(T) function for SM plasma
-        self.Nmu = 8                                     # Gauss-Legendre nodes for angular integrals
+        self.Nmu = 8                                     # GL nodes for angular integrals
 
         # --- temperature grid the kernels below are tabulated on ---
         self.T_grid = None       # shape (NT,)
 
-        # --- chi chibar -> f fbar, from kernels.annihilation_sm ---
+        # --- chi chibar -> f fbar, W+ W-, from kernels.annihilation_sm ---
         self.K_grid_xxff = None  # (NT, Np, Np)
+        self.K_grid_xxWW = None  # (NT, Np, Np); None switches the WW channel off
 
-        # --- chi chibar <-> A A, from kernels.annihilation_hidden ---
-        self.K_grid_xxAA = None      # (NT, Np, Np) loss kernel, chi side
-        self.K_grid_AAxx = None      # (NT, Np, Np) loss kernel, A side
-        self.gain_caches_xxAA = None  # list of NT gain-cache dicts
+        # --- chi chibar <-> Z_D Z_D, from kernels.annihilation_hidden ---
+        self.K_grid_xxZDZD = None      # (NT, Np, Np) loss kernel, chi side
+        self.K_grid_ZDZDxx = None      # (NT, Np, Np) loss kernel, Z_D side
+        self.gain_caches_xxZDZD = None  # list of NT gain-cache dicts
 
-        # --- chi f -> chi f, from kernels.elastic_sm   ---
-        # Both default to zeros (see the class body); assign gamma_grid_chi
-        # from `kernels.build_xfxf_kernels` to switch elastic scattering on.
+        # --- chi B -> chi B off light SM partners, from kernels.elastic_sm_light ---
+        # Both default to zeros; assign gamma_grid_chi to switch elastic scattering on.
         self.gamma_grid_chi = None   # momentum exchange rate [GeV], per T
-        self.gamma_grid_A = None
+        self.gamma_grid_ZD = None
+        self.gamma_fp_excluded = ()  # fermions left out of gamma_grid_chi
+        # FP matrices, from kernels.build_fp_matrices
+        self.FP_matrix_grid = None   # {"chi": (NT, Np, Np), "ZD": (NT, Np, Np)}
 
-        # --- chi A -> chi A dark Compton, from kernels.elastic_hidden ---
-        self.gain_caches_xAxA = None  # list of NT event-cache dicts
+        # --- chi B -> chi B off heavy SM partners, from kernels.elastic_sm_heavy ---
+        self.C_grid_heavy = None     # {partner name: (NT, Np, Np)}
+
+        # --- Z_D -> f fbar coefficients, most recent T only ---
+        self._decay_affine_cache = None
+
+        # --- chi Z_D -> chi Z_D dark Compton, from kernels.elastic_hidden ---
+        self.gain_caches_xZDxZD = None  # list of NT event-cache dicts
 
     # ------------------------------------------------------------------
     # Setup
@@ -120,10 +127,6 @@ class PhaseSpaceState:
 
     # ------------------------------------------------------------------
     # Derived quantities
-    #
-    # All three integrals below are trapezoidal in physical momentum, which
-    # is why each one needs T: the comoving grid maps to a different set of
-    # physical momenta at every temperature.
     # ------------------------------------------------------------------
     def number_density(self, name, T):
         """n = g/(2 pi^2) int dp p^2 f(p)   [GeV^3]"""
@@ -135,15 +138,13 @@ class PhaseSpaceState:
         """
         n_chi + n_chibar. The solver evolves f_chi only; with no particle
         -antiparticle asymmetry the two populations are identical, so this is
-        just twice n_chi. This (NOT `number_density("chi", T)`) is what
-        goes into the relic abundance.
+        just 2*n_chi. This is what goes into the relic abundance.
         """
         return 2.0 * self.number_density("chi", T)
 
     def s_SM(self, T):
         """
-        SM entropy density at T, using this state's g_* function rather than
-        the module-level tabulation -- they can differ if a custom g_*(T) was
-        supplied. Needed to convert a number density into a comoving yield.
+        SM entropy density at T, using this state's g_* function.
+        Needed to convert a number density into a comoving yield.
         """
         return entropy_density(T, self.gstar_func(T))

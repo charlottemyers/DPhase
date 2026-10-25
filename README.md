@@ -9,7 +9,7 @@ fermion dark matter candidate $\chi$ coupled to the Standard Model through a kin
 - Full phase-space evolution of $f_\chi(p,T)$ and $f_{Z_D}(p,T)$ on
   a comoving momentum grid, with no thermal-shape assumption on either species
 - Freeze-out, freeze-in, and the transitional regime are handled by the same solver, with no approximations at the boundary.
-- Full $Z$/$Z_D$ mass mixing, so dark photon masses up to the EW scale are treated consistently
+- Full $Z / Z_D$ mass mixing, so dark photon masses up to the EW scale are treated consistently
 - Collision terms:
   - $\chi\bar{\chi} \rightarrow f\bar{f},\ W^+W^-$: annihilation to all kinematically accessible SM final states
   - $\chi\bar{\chi} \leftrightarrow Z_D Z_D$: hidden sector annihilation, as a full $2\rightarrow2$ redistribution operator
@@ -106,7 +106,7 @@ See [`examples/example.ipynb`](examples/example.ipynb) for a worked example with
 | `grid.py` | Comoving momentum grid and species records |
 | `state.py` | Parameter and kernel container; derived densities |
 | `cosmology.py` | $g_*(T)$, Hubble rate, entropy, yields and relic abundance |
-| `model.py` | DP couplings ($Z$/$Z_D$ mixing), matrix elements, cross sections, widths, thermal averages |
+| `model.py` | DP couplings ($Z / Z_D$ mixing), matrix elements, cross sections, widths, thermal averages |
 | `kernels/` | Precomputed collision kernels, one submodule per process |
 | `collisions.py` | Collision operators, assembled from the kernels |
 | `solver.py` | Phase-space solver (`solve_BE`) |

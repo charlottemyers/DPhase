@@ -71,7 +71,9 @@ from .elastic_hidden import (
 from .elastic_sm_light import (
     # build-time
     gamma_single_fermion,
+    gamma_single_W,
     gamma_total,
+    gamma_total_W,
     build_xfxf_kernels,
     build_fp_matrices,
     # run-time
@@ -115,7 +117,9 @@ __all__ = [
     "_xZD_kernel_index",
     # chi B -> chi B, light partners
     "gamma_single_fermion",
+    "gamma_single_W",
     "gamma_total",
+    "gamma_total_W",
     "build_xfxf_kernels",
     "build_fp_matrices",
     "gamma_from_grid",

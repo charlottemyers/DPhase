@@ -21,7 +21,7 @@ Species order is `list(state.f.keys())`. Species are located by name; order is a
 Time stepping
 -------------
 The temperature grid is prescribed by the caller. Each step
-T_i -> T_{i+1} is converted to a time step via `cosmology.t_of_T_RD` and then
+T_i -> T_{i+1} is converted to a time step via `cosmology.dt_RD` and then
 taken as:
 
     f_next = f_current + dt * dfdt(T_next, f_next),
@@ -56,7 +56,7 @@ from dphase.collisions import (
     loss_self_annih_dfdt,
     xZD_elastic_collision_rhs,
 )
-from dphase.cosmology import H_RD, t_of_T_RD
+from dphase.cosmology import H_RD, dt_RD
 from dphase.kernels import (
     apply_xZD_elastic_loss,
     gamma_chi_from_grid,
@@ -263,9 +263,8 @@ def solve_BE(state, T_grid,
         T_next = T_grid[i + 1]
 
         # Convert the temp. step into a time step
-        g_now = state.gstar_func(T_now)
         g_next = state.gstar_func(T_next)
-        dt = t_of_T_RD(T_next, g_next) - t_of_T_RD(T_now, g_now)
+        dt = dt_RD(T_now, T_next, state.gstar_func)
 
         H = H_RD(T_next, g_next)
         p = state.grid.p_phys(T_next, gstars_func=state.gstar_func)

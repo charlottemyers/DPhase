@@ -156,6 +156,32 @@ def t_of_T_RD(T, gstar):
     return 1.0 / (2.0 * H_RD(T, gstar))
 
 
+def dt_RD(T_now, T_next, gstar_func):
+    """
+    Time elapsed between T_now and T_next during radiation domination, NOT assuming
+    a constant g_* (differencing `t_of_T_RD` is only exact for const g_*;
+    entropy conservation (a T g_{*s}^{1/3} = const) instead gives
+
+        dt = -(1/H) (dln T + dln g_{*s} / 3),
+
+    evaluated  with H at the geometric midpoint of the step. Assumes
+    g_{*s} = g_*, as elsewhere in the code.
+
+    Parameters
+    ----------
+    T_now, T_next : SM temperatures at the start and end of the step [GeV]
+    gstar_func    : callable T -> g_*(T)
+
+    Returns
+    -------
+    dt [GeV^-1], positive for T_next < T_now
+    """
+    g_now, g_next = gstar_func(T_now), gstar_func(T_next)
+    T_mid = np.sqrt(T_now * T_next)
+    H_mid = H_RD(T_mid, gstar_func(T_mid))
+    return -(np.log(T_next / T_now) + np.log(g_next / g_now) / 3.0) / H_mid
+
+
 # ---------------------------------------------------------------------------
 # Thermodynamic quantitites
 # ---------------------------------------------------------------------------

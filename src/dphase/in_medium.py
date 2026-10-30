@@ -63,8 +63,8 @@ def omega_p2_of_T(T):
         fd[live] = 1.0 / (np.exp(E[live]) + 1.0)
         integrand = (x**2 / E) * (1.0 - x**2 / (3.0 * E**2)) * 2.0 * fd
         total += fdata["Nc"] * fdata["Q2"] * np.trapezoid(integrand, x)
-        # add W+ W- contribution
-        total += _W_term(MW / T, x)
+    # add W+ W- contribution
+    total += _W_term(MW / T, x)
     return (4.0 * ALPHA_EM / np.pi) * total * T**2
 
 

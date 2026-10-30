@@ -41,7 +41,7 @@ __version__ = "0.1.0"
 from .grid import PhaseSpaceGrid, PhaseSpaceSpecies
 from .state import PhaseSpaceState
 from .solver import solve_BE
-from .cosmology import (H_of_T, H_RD, t_of_T_RD, gstar_interp, s_SM,
+from .cosmology import (H_of_T, H_RD, t_of_T_RD, dt_RD, gstar_interp, s_SM,
                         entropy_density, Y, relic_abundance)
 
 __all__ = [
@@ -54,6 +54,7 @@ __all__ = [
     "H_of_T",
     "H_RD",
     "t_of_T_RD",
+    "dt_RD",
     "gstar_interp",
     "s_SM",
     "entropy_density",

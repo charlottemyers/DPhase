@@ -467,7 +467,7 @@ def xZD_elastic_collision_rhs(T, y_flat, state, names, Np):
     over the incoming internal states, so each species picks up the dof of
     its collision partner:
 
-        df_chi/dt *= g_ZD   (3),     df_ZD/dt *= g_chi   (2)
+        df_chi/dt *= g_ZD   (3),     df_ZD/dt *=2 g_chi   (4)
 
     Returns
     -------
@@ -492,5 +492,5 @@ def xZD_elastic_collision_rhs(T, y_flat, state, names, Np):
     # together; i.e. there is no separate K_loss contraction here
     df_chi_total, df_ZD_total = apply_xZD_cache(cache, f_chi, f_ZD)
     out[sl_chi] = state.species["ZD"].dof * df_chi_total
-    out[sl_ZD]   = state.species["chi"].dof * df_ZD_total
+    out[sl_ZD]   = 2* state.species["chi"].dof * df_ZD_total
     return out

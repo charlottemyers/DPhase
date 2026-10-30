@@ -89,6 +89,8 @@ def _build_xZD_elastic_cache_inner(
     p_hi = p_grid[-1]
 
     # k = incoming chi bin, l = incoming Z_D bin, mu_in = cos(theta) between them in lab
+
+    # iterate over magnitude of the incoming momenta
     for k in range(Np):
         p_chi_k = p_grid[k]
         E_chi_k = E_chi[k]
@@ -98,8 +100,8 @@ def _build_xZD_elastic_cache_inner(
             pair_pref = PS[k] * PS[l]
             E_tot     = E_chi_k + E_ZD_l
 
+            # iterate over incoming angular nodes (mu_in) for the lab-frame angle between chi and Z_D
             for mi in range(Nmu_in):
-                # mu = cos(theta) between the incoming chi and Z_D 3-momenta in the lab frame
                 # mu_i fixes s, hence the CM energy s
                 mu_i  = mu_in_n[mi]
                 wmu_i = w_in_n[mi]
@@ -108,17 +110,19 @@ def _build_xZD_elastic_cache_inner(
                 if s <= thresh_sq:
                     continue
 
+                # Kallen function for the incoming state, lambda(s, (m_chi + m_ZD)^2, (m_chi - m_ZD)^2)
                 lam_in = (s - thresh_sq) * (s - diff_sq)
                 if lam_in <= 0.0:
                     continue
                 sqrt_s     = np.sqrt(s)
                 p_cm       = np.sqrt(lam_in) / (2.0 * sqrt_s)
 
-                # Starred quantities are CM-frame, fixed entirely by s.
+                # Starred quantities are CM-frame, fixed entirely by s
                 E_chi_star = (s + m2_chi - m2_ZD) / (2.0 * sqrt_s)
                 E_ZD_star   = (s + m2_ZD   - m2_chi) / (2.0 * sqrt_s)
                 v_Mol      = np.sqrt(lam_in) / (2.0 * E_chi_k * E_ZD_l)
 
+                # Total momentum squared in the lab frame, used to determine the boost to the CM frame
                 P_tot_sq = p_chi_k * p_chi_k + p_ZD_l * p_ZD_l + 2.0 * p_chi_k * p_ZD_l * mu_i
                 if P_tot_sq <= 0.0:
                     # Anti-aligned, near-equal momenta: the CM frame coincides
@@ -133,6 +137,9 @@ def _build_xZD_elastic_cache_inner(
                     gamma = E_tot / sqrt_s           # = 1/sqrt(1 - beta^2)
                     # psi is the CM-frame angle between the boost axis and the incoming chi.
                     # Ties the CM emission angles to lab-frame momenta, via mu_b below.
+
+                    # p_chi_dot_b = projection of chi momentum onto the boost axis in the lab frame
+                    # p_chi_par_cm = component of chi momentum along the boost axis in the CM frame
                     p_chi_dot_b  = p_chi_k * (p_chi_k + p_ZD_l * mu_i) / P_tot
                     p_chi_par_cm = gamma * (p_chi_dot_b - beta * E_chi_k)
                     cos_psi      = p_chi_par_cm / p_cm
@@ -158,7 +165,7 @@ def _build_xZD_elastic_cache_inner(
                     mu_c = mu_cm_n[mc]
                     w_c  = w_cm_n[mc]
 
-                    # |M|^2 inlined to keepthis loop numba-compilable.
+                    # |M|^2 inlined to keep loop numba-compilable.
                     # For elastic scattering of equal CM momenta, t = -2 p_cm^2 (1 - cos).
                     t_val = -2.0 * p_cm * p_cm * (1.0 - mu_c)
 
@@ -220,12 +227,11 @@ def _build_xZD_elastic_cache_inner(
 
                         rate_event = rate_base * M2 * w_c * w_p
 
-                        # Discretized loss rate, diagnostic only
+                        # Discretized loss rate, diagnostic ONLY
                         K_loss_disc[k, l] += rate_event / pair_pref
 
                         # Bracketing bins for each product, then a bilinear
                         # split, linear in energy, over the four combinations.
-                        # Energy-linear so the split conserves energy exactly.
                         i_chi_lo = np.searchsorted(p_grid, p3) - 1
                         if i_chi_lo < 0:
                             i_chi_lo = 0
@@ -234,6 +240,7 @@ def _build_xZD_elastic_cache_inner(
                         i_chi_hi = i_chi_lo + 1
 
                         # Interpolation fraction for the chi particle between its bracketing bins
+                        # E3 = lab-frame energy of the outgoing chi particle (i.e. the true energy)
                         alpha_chi = (E3 - E_chi[i_chi_lo]) \
                                     / (E_chi[i_chi_hi] - E_chi[i_chi_lo])
                         if alpha_chi < 0.0:
@@ -256,6 +263,7 @@ def _build_xZD_elastic_cache_inner(
 
                         # because we're depositing 4 sub-events corresponding to the four combinations of the bracketing bins
                         # the weights for these sub-events are given by the bilinear interpolation fractions
+                        # weights sum to 1 and distribute the event rate among the four sub-events
                         w_ll = (1.0 - alpha_chi) * (1.0 - alpha_ZD)
                         w_lh = (1.0 - alpha_chi) * alpha_ZD
                         w_hl = alpha_chi         * (1.0 - alpha_ZD)
@@ -294,7 +302,6 @@ def _build_xZD_elastic_cache_inner(
                         n_ev += 1
 
     # for each event we save: the incoming momenta (k, l), the outgoing momentum bin indices (i_chi, i_ZD), and the rate weight (R);
-
     return (ev_k_buf[:n_ev], ev_l_buf[:n_ev],
             ev_ichi_buf[:n_ev], ev_iZD_buf[:n_ev],
             ev_R_buf[:n_ev], K_loss_disc)
@@ -396,6 +403,7 @@ def _dedup_event_entries(k_idx, l_idx, i_chi, i_ZD, R, Np):
     """
     Collapse cache entries sharing the same (k, l, i_chi, i_ZD) tuple, summing
     their rates.
+    k_idx, l_idx, i_chi, i_ZD are the indices of the incoming and outgoing particles in the raw event list.
 
     Because bilinear split lands many different angular quadrature points
     in the same bins, the raw event list is highly redundant
@@ -427,6 +435,7 @@ def _dedup_event_entries(k_idx, l_idx, i_chi, i_ZD, R, Np):
     # Sum the rates for events that share the same (k, l, i_chi, i_ZD) tuple.
     R_summed = np.bincount(inv, weights=R, minlength=uniq.size)
 
+    # nz = mask for non-zero summed rates, used to filter out events with zero contribution
     nz = R_summed != 0.0
     uniq = uniq[nz]
     R_summed = R_summed[nz]
@@ -458,7 +467,7 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
     holds per event rather. And every event removes exactly as much as it adds, so
     particle number is conserved bin-to-bin.
 
-    The factor 1/2: delta includes the reverse process explicitly, but the
+    factor 1/2: delta includes the reverse process explicitly, but the
     cache also contains every reverse configuration as its own event, so
     without it each process is counted twice.
 
@@ -466,6 +475,8 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
     `collisions.xZD_elastic_collision_rhs` for  prefactors.
 
     Runs once per Newton iteration over the full deduplicated event list.
+
+    R is the rate associated with each event, as computed in the gain cache.
     """
     df_chi = np.zeros(Np)
     df_ZD   = np.zeros(Np)
@@ -480,7 +491,9 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
         ic = i_chi[i]
         iZD = i_ZD[i]
 
+        # at this point, we have the indices of the incoming and outgoing bins for this event
         # index into the current distributions to compute the delta for this event
+        # delta = per-event change in the distribution functions for this event;
         delta = 0.5 * R[i] * (f_chi[k] * f_ZD[l] - f_chi[ic] * f_ZD[iZD])
         df_chi[k]  -= delta * invW[k]  # remove from incoming chi bin
         df_chi[ic] += delta * invW[ic] # add to outgoing chi bin
@@ -512,8 +525,6 @@ def apply_xZD_cache(cache, f_chi, f_ZD):
         ev["k_idx"], ev["l_idx"], ev["i_chi"], ev["i_ZD"], ev["R"],
         cache["invW"], f_chi, f_ZD, Np,
     )
-
-
 
 
 def apply_xZD_elastic_loss(p_grid, dlogp, K_loss, f_chi, f_ZD):

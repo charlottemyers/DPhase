@@ -158,13 +158,13 @@ def t_of_T_RD(T, gstar):
 
 def dt_RD(T_now, T_next, gstar_func):
     """
-    Time elapsed between T_now and T_next during radiation domination, NOT assuming
-    a constant g_* (differencing `t_of_T_RD` is only exact for const g_*;
-    entropy conservation (a T g_{*s}^{1/3} = const) instead gives
+    Time between T_now and T_next during radiation domination, NOT assuming
+    a constant g_* (differencing `t_of_T_RD` only exact for const g_*;
+    entropy conservation (a T g_{*s}^{1/3} = const) gives
 
-        dt = -(1/H) (dln T + dln g_{*s} / 3),
+    dt = -(1/H) (dln T + dln g_{*s} / 3),
 
-    evaluated  with H at the geometric midpoint of the step. Assumes
+    evaluated  with H at the step's geometric midpoint. Assumes
     g_{*s} = g_*, as elsewhere in the code.
 
     Parameters

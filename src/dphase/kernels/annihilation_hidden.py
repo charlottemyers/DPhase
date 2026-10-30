@@ -6,8 +6,7 @@ Both directions are built, with the cross section provided by`model.sigma_s_xxZD
 Each direction produces two distinct objects:
 
   loss  -- how fast the incoming pair is destroyed. Depends only on sigma(s),
-           so it collapses to a (Np, Np) matrix K_ij, built by
-           `_annih_loss_kernel`.
+           so it collapses to a (Np, Np) matrix K_ij, built by `_annih_loss_kernel`.
   gain  -- where in momentum the products land. Needs the outgoing kinematics
            boosted back from the CM frame, and the (k, l) -> i map is sparse
            and irregular, so it is stored as a flat event list rather than a
@@ -188,7 +187,7 @@ def _build_gain_cache_inner_bilinear(
     and, for each, boosts the outgoing particle from the CM frame back to the
     cosmological frame to get its momentum p1. Because p1 rarely lands on
     a grid point, the event's weight is split linearly in energy between the
-    two bracketing bins ("bilinear"). The result is a flat event list rather
+    two bracketing bins ("bilinear"). Result is a flat event list rather
     than a matrix, since the (k, l) -> i mapping is sparse and irregular.
 
     Applied later by `apply_gain_cache` as
@@ -249,6 +248,7 @@ def _build_gain_cache_inner_bilinear(
     # per-s deposit weights over the mu_out nodes; fixed when isotropic
     aw = wP_out.copy()
 
+    # iterate over magnitude of the incoming momenta
     for k in range(Np_in):
         p3 = p_in[k]
         E3 = E_in[k]
@@ -262,6 +262,7 @@ def _build_gain_cache_inner_bilinear(
             p3p4 = p3 * p4
             p3sq_p4sq = p3 * p3 + p4 * p4
 
+            # iterate over incoming angular nodes (mu_in); where mu = cos(angle between p3 and p4, in the lab frame)
             for mi in range(Nmu_in):
                 mu = mu_in[mi]
                 wmu = w_in[mi]

@@ -143,8 +143,9 @@ def get_dark_compton_loss_term(T, y_flat, state, names, Np):
     cache = state.gain_caches_xZDxZD[i_T]
 
     df_chi, df_ZD = apply_xZD_elastic_loss(p, dlogp, cache["K_loss"], fchi, fZD)
+    # factor of 2 for scattering off of chi + chibar
     return (state.species["ZD"].dof * df_chi,
-            state.species["chi"].dof * df_ZD)
+            2*state.species["chi"].dof * df_ZD)
 
 
 def _peak_rate_over_H(loss_chi, loss_ZD, f_chi, f_ZD, p, H):
@@ -169,7 +170,7 @@ def _peak_rate_over_H(loss_chi, loss_ZD, f_chi, f_ZD, p, H):
 
 
 def solve_BE(state, T_grid,
-             Gamma_H_max=200.0,
+             Gamma_H_max=50.0,
              include_scatter=True,
              include_dark_compton=True,
              include_heavy_scatter=True,

@@ -7,15 +7,6 @@ Here, both scattering partners are dark-sector particles of comparable mass. The
 therefore has to be a full 2 -> 2 redistribution, and the outgoing state depends on t as well
 as s, so the quadrature needs BOTH CM angles: (k, l) x mu_in x mu_CM x phi_CM
 
-Gain, loss and the fixed point
-------------------------------
-The event cache stores an unnormalized rate R per (k, l, i_chi, i_ZD) tuple
-rather than a pre-divided deposit weight, and gain and loss are applied together
-per entry (see `_apply_xZD_delta_numba`). This makes number conservation exact
-for any f. It does NOT make the binned equilibrium an exact fixed point: the
-bilinear split sends each quadrature point to bins whose energies only bracket
-E_k + E_l, so f_eq is stationary, and energy conserved, only up to O(h^2)
-in the log bin width h.
 """
 
 import numpy as np
@@ -474,10 +465,7 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
     Guaranteed, for any f:
       - number conservation, per entry: each entry removes delta from bins k
         and l and adds the same delta to i_chi and i_ZD. The total scattered
-        out of (k, l) is the sum over all of its entries.
-      - a discrete H-theorem: d/dt sum W f (ln f - 1) <= 0, since each entry
-        contributes -(R/2) (F_a - F_b) ln(F_a / F_b), with
-        F_a = f_chi[k] f_ZD[l] and F_b = f_chi[i_chi] f_ZD[i_ZD].
+        out of (k, l) is the sum over all of its entries..
 
     Reverse process and the factor 1/2: the second term of delta runs
     (i_chi, i_ZD) -> (k, l) with this entry's rate R. The cache's own entry for
@@ -487,14 +475,11 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
 
         (R + R')/2 * (F_a - F_b),
 
-    so the 1/2 symmetrizes the forward and reverse discrete rates, not
-    removes an exact double count. In the continuum limit R' -> R and this
-    reduces to the usual gain - loss.
+    so the 1/2 symmetrizes the forward and reverse discrete rates.
+    In the continuum limit R' -> R and this reduces to the usual gain - loss.
 
     The result is per dof, with no partner-dof factor; see
     `collisions.xZD_elastic_collision_rhs` for  prefactors.
-
-    R is the rate associated with each event, as computed in the gain cache.
     """
     df_chi = np.zeros(Np)
     df_ZD   = np.zeros(Np)
@@ -509,9 +494,8 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
         ic = i_chi[i]
         iZD = i_ZD[i]
 
-        # at this point, we have the indices of the incoming and outgoing bins for this event
-        # index into the current distributions to compute the delta for this event
-        # delta = per-event change in the distribution functions for this event;
+        # index into the current distributions to compute the delta for this channel
+        # delta = per-channel change in the distribution functions for this channel;
         delta = 0.5 * R[i] * (f_chi[k] * f_ZD[l] - f_chi[ic] * f_ZD[iZD])
         df_chi[k]  -= delta * invW[k]     # remove from incoming chi bin
         df_chi[ic] += delta * invW[ic]    # add to outgoing chi bin

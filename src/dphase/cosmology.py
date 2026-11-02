@@ -266,7 +266,7 @@ def relic_abundance(Y_inf, m):
 
 
 
-def compute_yields_from_snaps(T_vals, mchi, mZD, st, snaps, gchi = 2, gZD = 3):
+def compute_yields_from_snapshots(T_vals, mchi, mZD, st, snaps, gchi = 2, gZD = 3):
     """
     Compute the comoving yields and number densities for chi and ZD from snapshots.
 

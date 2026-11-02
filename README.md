@@ -49,7 +49,7 @@ A run has four steps: set up the species and grid, set the couplings, precompute
 import numpy as np
 import dphase
 from dphase import kernels
-from dphase.cosmology import compute_yields_from_snaps
+from dphase.cosmology import compute_yields_from_snapshots
 
 # 1. Species and comoving momentum grid
 m_chi, m_ZD = 10.0, 5.0                          # [GeV]
@@ -85,14 +85,14 @@ state.FP_matrix_grid = kernels.build_fp_matrices(T_grid, state)
 # 4. Solve from an empty dark sector
 state.set_initial_f("chi", np.zeros_like(grid.ptilde))
 state.set_initial_f("ZD",  np.zeros_like(grid.ptilde))
-T_vals, snapshots = dphase.solve_BE(state, T_grid, Gamma_H_max=50)
+T_vals, snapshots = dphase.solve_BE(state, T_grid)
 
 # 5. Yields and relic abundance
-Y_DM, Y_ZD, *_ = compute_yields_from_snaps(T_vals, m_chi, m_ZD, state, snapshots)
+Y_DM, Y_ZD, *_ = compute_yields_from_snapshots(T_vals, m_chi, m_ZD, state, snapshots)
 print("Omega h^2 =", dphase.relic_abundance(Y_DM[-1], m_chi))
 ```
 
-`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature in `T_grid`, on the comoving grid. `compute_yields_from_snaps` returns $Y_{\rm DM} = Y_\chi + Y_{\bar\chi}$ (plus the $Z_D$ and equilibrium yields), which is what `relic_abundance` expects.
+`snapshots` is a list of `{species_name: f}` dictionaries, one per temperature in `T_grid`, on the comoving grid. `compute_yields_from_snapshots` returns $Y_{\rm DM} = Y_\chi + Y_{\bar\chi}$ (plus the $Z_D$ and equilibrium yields), which is what `relic_abundance` expects.
 
 See [`examples/example.ipynb`](examples/example.ipynb) for a worked example with plots. For the number-density solver, see the parameter list at the top of [`cbe.py`](src/dphase/cbe.py) and `cbe.evolve`.
 

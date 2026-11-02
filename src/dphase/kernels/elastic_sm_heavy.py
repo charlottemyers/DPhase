@@ -101,13 +101,23 @@ def _deposit(C, loss, k, ic, iB, l, R, fB, stat, invW, E_chi, T):
     """
     Add one sub-event (k, l) -> (ic, iB) with rate R to the matrix.
 
-    Note: The delta form R (a f_k - b f_ic) includes the reverse process
+    The sub-event is a 2 -> 2 channel: the bilinear split divides the rate of
+    a quadrature point among four channels, never the particle. Whatever
+    leaves bin k through this channel lands in bin ic, so chi number is
+    conserved per sub-event.
+
+    The delta form R (a f_k - b f_ic) includes the reverse process
     explicitly, but the event loop runs over ALL initial (k, l), so the
-    reverse configuration is also visited as its own event. Each direction
-    is therefore weighted by R/2 here.
+    reverse channel (ic, iB) -> (k, l) is also visited as its own sub-event,
+    with its own discretized rate R'. R' agrees with R only in the continuum
+    limit, so with R/2 on each the k <-> ic exchange runs at (R + R')/2:
+    the 1/2 symmetrizes the two discrete rates, not removes an exact
+    double count.
 
     The reverse weight b = a exp((E_ic - E_k)/T) is fixed by detailed
-    balance on the binned equilibrium f, so e^{-E/T} is an exact zero of C.
+    balance on the binned equilibrium f, so e^{-E/T} is an exact zero of C
+    whatever R and R' are. (Contrast `elastic_hidden`, whose dark-sector
+    partner has no fixed temperature to build such a factor from.)
 
     Parameters
     ----------

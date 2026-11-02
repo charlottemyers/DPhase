@@ -11,7 +11,8 @@ Contents (in order):
   - Z_D -> f fbar decay |M|^2 and total width
   - elastic chi Z_D -> chi Z_D, and chi B -> chi B off the SM bath (B = f, W)
   - Gondolo-Gelmini thermal averages <sigma v> for the three annihilation
-    channels (used by `cbe`)
+    channels, and the energy-weighted <sigma v E> for the two SM channels
+    (used by `cbe`)
 
 Conventions:
   - x = chi, Z_D = dark photon, f = SM fermion.
@@ -867,10 +868,60 @@ def M2_xB_t_averaged(s, mchi, mB, mZD, proc, consts, epsrel=1e-3, limit=100):
 
 
 #############################################################
-###### Thermally averaged <sigma v> for all channels
+###### Thermally averaged <sigma v> and <sigma v E> for all channels
 #############################################################
-# All use the Gondolo-Gelmini average with exponentially scaled Bessel
-# functions (kve), so they stay finite at large x = mchi/T
+# All use the Gondolo-Gelmini average, integrated in sqrt(s), with
+# exponentially scaled Bessel functions (kve) so they stay finite at large x
+#
+#   <sigma v>     n_eq^2 ~ int ds sigma(s) (s - 4 m^2) sqrt(s) K1(sqrt(s)/T)
+#   <sigma v E>   n_eq^2 ~  int ds sigma(s) (s - 4 m^2)   s    K2(sqrt(s)/T)
+#
+# with the same prefactor. E = E_1 + E_2 is the plasma-frame energy of the
+# annihilating pair: weighting the pair-energy integral of the Gondolo-Gelmini
+# derivation by E_+ turns
+#   int dE+ sqrt(E+^2 - s) e^{-E+/T} = sqrt(s) T K1(sqrt(s)/T)
+# into
+#   int dE+ E+ sqrt(E+^2 - s) e^{-E+/T} = s T K2(sqrt(s)/T).
+# <sigma v E> is used for the cBE energy transfer Q_ann
+
+
+def _gg_norm(T, mchi):
+    """
+    Gondolo-Gelmini prefactor 1 / (8 m^4 T K2(m/T)^2), with K2 scaled by
+    e^{m/T} (kve); the matching e^{-2m/T} is folded into `_gg_weight`.
+    """
+    K2e = kve(2, mchi / T)
+    if K2e <= 0.0 or not np.isfinite(K2e):
+        return None
+    return 1.0 / (8.0 * mchi**4 * T * K2e * K2e)
+
+
+def _gg_weight(rs, T, mchi, energy_weighted):
+    """
+    Everything in the Gondolo-Gelmini integrand except sigma(s), in the
+    variable rs = sqrt(s) (ds = 2 rs drs):
+
+        (s - 4 m^2) * 2 rs * [ rs K1(rs/T)   for <sigma v>
+                               s  K2(rs/T)   for <sigma v E> ]
+
+    with the Bessel functions scaled to e^{-(rs - 2m)/T} to match `_gg_norm`.
+    """
+    s = rs * rs
+    if energy_weighted:
+        bessel = s * kve(2, rs / T)
+    else:
+        bessel = rs * kve(1, rs / T)
+    return (s - 4.0 * mchi**2) * (2.0 * rs) * bessel * np.exp(-(rs - 2.0 * mchi) / T)
+
+
+def _vectorize_T(func, T, *args, **kwargs):
+    """Evaluate scalar-T thermal average over an array of T, or return None for scalar T."""
+    T_in = np.asarray(T, dtype=float)
+    if T_in.ndim == 0:
+        return None
+    out = np.array([func(t, *args, **kwargs) for t in T_in.reshape(-1)])
+    return out.reshape(T_in.shape)
+
 
 def sigma_v_xxZDZD(T, alphaD, mchi, mZD, alpha_mix, s_max_factor=60.0):
     """
@@ -879,91 +930,60 @@ def sigma_v_xxZDZD(T, alphaD, mchi, mZD, alpha_mix, s_max_factor=60.0):
 
     Returns the standard Gondolo-Gelmini thermal average (per-dof-averaged sigma
     convention, same as the kernel). Multiply by g_chi factors at the
-    rate level, NOT here.
+    rate level, NOT here. T may be a scalar or an array.
     """
-    T_in = np.asarray(T, dtype=float)
-    if T_in.ndim > 0:                            # vectorize over T
-        flat = T_in.reshape(-1)
-        out = np.array([sigma_v_xxZDZD(t, alphaD, mchi, mZD, alpha_mix,
-                                     s_max_factor=s_max_factor)
-                        for t in flat])
-        return out.reshape(T_in.shape)
-    T = float(T_in)
+    out = _vectorize_T(sigma_v_xxZDZD, T, alphaD, mchi, mZD, alpha_mix,
+                       s_max_factor=s_max_factor)
+    if out is not None:
+        return out
+    T = float(T)
 
-    s_thr = max(4.0*mchi**2, 4.0*mZD**2)
-    x = mchi / T
-
-    K2e = kve(2, x)
-    if K2e <= 0.0 or not np.isfinite(K2e):
+    norm = _gg_norm(T, mchi)
+    if norm is None:
         return 0.0
-    norm = 1.0 / (8.0 * mchi**4 * T * K2e*K2e)
 
     # physical chi-chi-Z_D coupling
     g_ZDchi = gD_of_alpha(alphaD) * np.cos(alpha_mix)
 
-    # substitute u = sqrt(s) for a smoother integrand
-    rs_thr = np.sqrt(s_thr)
+    rs_thr = np.sqrt(max(4.0*mchi**2, 4.0*mZD**2))
     rs_max = rs_thr + s_max_factor * T          # exp tail in K1(sqrt(s)/T)
 
-    def integrand(rs):                          # rs = sqrt(s)
-        s = rs*rs
-        sig = sigma_s_xxZDZD(g_ZDchi, mchi, mZD, np.array([s]))[0]
+    def integrand(rs):
+        sig = sigma_s_xxZDZD(g_ZDchi, mchi, mZD, np.array([rs*rs]))[0]
         if sig <= 0.0 or not np.isfinite(sig):
             return 0.0
-        # ds = 2 rs d(rs); kernel = sigma*(s-4mchi^2)*sqrt(s)*K1(sqrt(s)/T)
-        return (sig * (s - 4.0*mchi**2) * rs * (2.0*rs)
-                * kve(1, rs/T) * np.exp(-(rs - 2.0*mchi) / T))
+        return sig * _gg_weight(rs, T, mchi, False)
 
     val, _ = quad(integrand, rs_thr, rs_max, limit=200)
     return norm * val
 
 
-def sigma_v_xxff(T, mchi, epsilon, alphaD, fermions_info, mZD,
-                 s_max_factor=60.0):
-    """
-    <sigma v> for chi chibar -> sum_f f fbar at temperature T, using
-    sigma_s_xxff for each fermion. Incoming mass = mchi.
-
-    Returns the Gondolo-Gelmini thermal average, summed over fermions.
-    """
-    T_in = np.asarray(T, dtype=float)
-    if T_in.ndim > 0:                            # vectorize over T
-        flat = T_in.reshape(-1)
-        out = np.array([sigma_v_xxff(t, mchi, epsilon, alphaD, fermions_info,
-                                     mZD, s_max_factor=s_max_factor)
-                        for t in flat])
-        return out.reshape(T_in.shape)
-    T = float(T_in)
-
-    x = mchi / T
-    K2e = kve(2, x)
-    if K2e <= 0.0 or not np.isfinite(K2e):
+def _thermal_avg_xxff(T, mchi, epsilon, alphaD, fermions_info, mZD,
+                      s_max_factor, energy_weighted):
+    """Scalar-T body of sigma_v_xxff and sigma_vE_xxff."""
+    norm = _gg_norm(T, mchi)
+    if norm is None:
         return 0.0
-    norm = 1.0 / (8.0 * mchi**4 * T * K2e*K2e)
 
     total = 0.0
     for name, fdata in fermions_info.items():
         mf = fdata["mass_GeV"]
         Nc = fdata["Nc"]
-        s_thr = max(4.0*mchi**2, 4.0*mf**2)
 
         params = compute_couplings(
             epsilon=epsilon, fermion=name, mZD=mZD, alphaD=alphaD,
             fermions_info=fermions_info)
         params["mchi"] = mchi
 
-        rs_thr = np.sqrt(s_thr)
+        rs_thr = np.sqrt(max(4.0*mchi**2, 4.0*mf**2))
         rs_max = rs_thr + s_max_factor * T
 
         def integrand(rs, mf=mf, params=params, Nc=Nc):
-            s = rs*rs
-            sig = sigma_s_xxff(
-                np.array([s]), m_initial=mchi, m_final=mf,
-                params=params, Nc=Nc)[0]
+            sig = sigma_s_xxff(np.array([rs*rs]), m_initial=mchi, m_final=mf,
+                               params=params, Nc=Nc)[0]
             if sig <= 0.0 or not np.isfinite(sig):
                 return 0.0
-            return (sig * (s - 4.0*mchi**2) * rs * (2.0*rs)
-                    * kve(1, rs/T) * np.exp(-(rs - 2.0*mchi) / T))
+            return sig * _gg_weight(rs, T, mchi, energy_weighted)
 
         val, _ = quad(integrand, rs_thr, rs_max, limit=200)
         total += norm * val
@@ -971,28 +991,49 @@ def sigma_v_xxff(T, mchi, epsilon, alphaD, fermions_info, mZD,
     return total
 
 
-def sigma_v_xxWW(T, mchi, epsilon, alphaD, mZD, mW=MW, s_max_factor=60.0):
+def sigma_v_xxff(T, mchi, epsilon, alphaD, fermions_info, mZD,
+                 s_max_factor=60.0):
     """
-    <sigma v> for chi chibar -> W+ W- at temperature T, using
-    sigma_s_xxWW. Same Gondolo-Gelmini average and per-dof convention as
-    sigma_v_xxff: substitute directly into the number-density equation.
-    """
-    T_in = np.asarray(T, dtype=float)
-    if T_in.ndim > 0:                            # vectorize over T
-        flat = T_in.reshape(-1)
-        out = np.array([sigma_v_xxWW(t, mchi, epsilon, alphaD, mZD, mW=mW,
-                                     s_max_factor=s_max_factor)
-                        for t in flat])
-        return out.reshape(T_in.shape)
-    T = float(T_in)
+    <sigma v> for chi chibar -> sum_f f fbar at temperature T, using
+    sigma_s_xxff for each fermion (Nc included). Incoming mass = mchi.
 
-    x = mchi / T
-    K2e = kve(2, x)
-    if K2e <= 0.0 or not np.isfinite(K2e):
+    Gondolo-Gelmini thermal average, per-dof-averaged convention.
+    T can be a scalar or an array.
+    """
+    out = _vectorize_T(sigma_v_xxff, T, mchi, epsilon, alphaD, fermions_info,
+                       mZD, s_max_factor=s_max_factor)
+    if out is not None:
+        return out
+    return _thermal_avg_xxff(float(T), mchi, epsilon, alphaD, fermions_info,
+                             mZD, s_max_factor, energy_weighted=False)
+
+
+def sigma_vE_xxff(T, mchi, epsilon, alphaD, fermions_info, mZD,
+                  s_max_factor=60.0):
+    """
+    <sigma v E> for chi chibar -> sum_f f fbar at temperature T, where
+    E = E_1 + E_2 is the plasma-frame energy of the annihilating pair.
+
+    Same Gondolo-Gelmini average and conventions as `sigma_v_xxff`, with
+    sqrt(s) K1(sqrt(s)/T) -> s K2(sqrt(s)/T) in the integrand (see the
+    section header). Units GeV x [sigma_v_xxff]
+    """
+    out = _vectorize_T(sigma_vE_xxff, T, mchi, epsilon, alphaD, fermions_info,
+                       mZD, s_max_factor=s_max_factor)
+    if out is not None:
+        return out
+    return _thermal_avg_xxff(float(T), mchi, epsilon, alphaD, fermions_info,
+                             mZD, s_max_factor, energy_weighted=True)
+
+
+def _thermal_avg_xxWW(T, mchi, epsilon, alphaD, mZD, mW, s_max_factor,
+                      energy_weighted):
+    """Scalar-T body of sigma_v_xxWW and sigma_vE_xxWW."""
+    norm = _gg_norm(T, mchi)
+    if norm is None:
         return 0.0
-    norm = 1.0 / (8.0 * mchi**4 * T * K2e*K2e)
 
-    # WW couplings don't depend on the fermion; 'e' is used as a placeholder.
+    # WW couplings don't depend on the fermion; 'e' is just a placeholder.
     params = compute_couplings(epsilon=epsilon, fermion="e", mZD=mZD,
                                alphaD=alphaD)
 
@@ -1000,13 +1041,41 @@ def sigma_v_xxWW(T, mchi, epsilon, alphaD, mZD, mW=MW, s_max_factor=60.0):
     rs_max = rs_thr + s_max_factor * T
 
     def integrand(rs):
-        s = rs*rs
-        sig = sigma_s_xxWW(np.array([s]), mchi, params, mW=mW)[0]
+        sig = sigma_s_xxWW(np.array([rs*rs]), mchi, params, mW=mW)[0]
         if sig <= 0.0 or not np.isfinite(sig):
             return 0.0
-        return (sig * (s - 4.0*mchi**2) * rs * (2.0*rs)
-                * kve(1, rs/T) * np.exp(-(rs - 2.0*mchi) / T))
+        return sig * _gg_weight(rs, T, mchi, energy_weighted)
 
+    # the Z_D resonance can sit inside the integration range
     points = [mZD] if rs_thr < mZD < rs_max else None
     val, _ = quad(integrand, rs_thr, rs_max, limit=200, points=points)
     return norm * val
+
+
+def sigma_v_xxWW(T, mchi, epsilon, alphaD, mZD, mW=MW, s_max_factor=60.0):
+    """
+    <sigma v> for chi chibar -> W+ W- at temperature T, using sigma_s_xxWW.
+    Same GG average and per-dof convention as sigma_v_xxff.
+    T can be a scalar or an array.
+    """
+    out = _vectorize_T(sigma_v_xxWW, T, mchi, epsilon, alphaD, mZD, mW=mW,
+                       s_max_factor=s_max_factor)
+    if out is not None:
+        return out
+    return _thermal_avg_xxWW(float(T), mchi, epsilon, alphaD, mZD, mW,
+                             s_max_factor, energy_weighted=False)
+
+
+def sigma_vE_xxWW(T, mchi, epsilon, alphaD, mZD, mW=MW, s_max_factor=60.0):
+    """
+    <sigma v E> for chi chibar -> W+ W- at temperature T, E the plasma-frame
+    energy of the annihilating pair. Same as `sigma_v_xxWW` with
+    sqrt(s) K1 -> s K2 in the integrand; see `sigma_vE_xxff`.
+    T may be a scalar or an array.
+    """
+    out = _vectorize_T(sigma_vE_xxWW, T, mchi, epsilon, alphaD, mZD, mW=mW,
+                       s_max_factor=s_max_factor)
+    if out is not None:
+        return out
+    return _thermal_avg_xxWW(float(T), mchi, epsilon, alphaD, mZD, mW,
+                             s_max_factor, energy_weighted=True)

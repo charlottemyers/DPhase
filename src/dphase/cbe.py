@@ -18,12 +18,16 @@ Required : mchi, mZD, gchi, gZD, epsilon
            sv_xxZDZD, sv_xxee, sv_xxWW : <sigma v> for chi chibar -> Z_D Z_D,
                -> f fbar (summed over f) and -> W+ W-; each a scalar or a
                callable of temperature.
+           svE_xxee, svE_xxWW : energy-weighted <sigma v E> for -> f fbar and
+               -> W+ W-, E the energy of the annihilating pair
+               (`model.sigma_vE_xxff`, `sigma_vE_xxWW`); scalar or callable of
+               temperature. Used for the annihilation energy transfer.
            gamma_ZDff : total Z_D -> f fbar width [GeV] (`model.gammaZD_allf_mixing`)
            gamma_T   : momentum-exchange rate gamma(T) [GeV] for chi scattering
                off the SM bath, scalar or callable of T. Required when elastic=True.
 Optional : t_dep, include_hs_in_H, no_Th_evolution, elastic (default True),
            delta_dxdt, max_abs_dlnydx,
-           xxff_forward_at_Th (default True, see `_number_collision_terms`),
+           xxff_forward_at_Th (default True),
            in_medium_eps_eff (thermal correction to Z_D <-> f fbar, see
                `in_medium.cbe_decay_factors`)
 """
@@ -286,8 +290,7 @@ def _number_collision_terms(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
 
     Returns
     -------
-    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM, sv_SM, sv_HS
-    with sv_SM / sv_HS = (<sv>_ff + <sv>_WW) at T and at the forward temperature.
+    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM
     """
     mchi, mZD = params["mchi"], params["mZD"]
     gchi, gZD = params["gchi"], params["gZD"]
@@ -312,7 +315,7 @@ def _number_collision_terms(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     nZD_eq_SM = safe_exp(ln_neq(mZD, gZD, T))
 
     # Time dilation <m/E> = K1/K2, at the hidden and the SM temperature,
-    # times the in-medium factors (all 1 unless in_medium_eps_eff).
+    # times the in-medium factors (1 unless in_medium_eps_eff).
     r_dec_gain, r_dec_loss, _, _ = _in_medium_factors(params, T, Th)
     lorentz_HS = _R(mZD / np.maximum(Th, VAL_FLOOR)) * r_dec_loss
     lorentz_SM = _R(mZD / np.maximum(T, VAL_FLOOR)) * r_dec_gain
@@ -325,8 +328,7 @@ def _number_collision_terms(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     C_chi = -hs - ann_ff - ann_WW
     C_ZD = 2.0 * hs - dec
 
-    return (C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM,
-            sv_xxff_SM + sv_xxWW_SM, sv_xxff_HS + sv_xxWW_HS)
+    return C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM
 
 
 def collisions(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
@@ -336,11 +338,16 @@ def collisions(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
 
     The three energy channels are
 
-        Q_ann : chi chibar <-> f fbar, W+ W-. Each forward annihilation
-                removes the mean energy of a hidden-sector pair, thermal at
-                T_h; each inverse event injects that of a pair produced from
-                the SM bath, which by detailed balance has the equilibrium
-                spectrum at T.
+        Q_ann : chi chibar <-> f fbar, W+ W-, from the energy-weighted
+                averages <sigma v E> (params["svE_xxee"], ["svE_xxWW"]),
+                E the energy of the annihilating pair:
+                    Q_ann = -( <sigma v E>(T_h) n_chi^2
+                               - <sigma v E>(T) n_chi,eq^2 ).
+                The forward annihilation removes hidden-sector pairs, thermal
+                at T_h; the inverse injects pairs produced from the SM bath,
+                which by detailed balance have the equilibrium dist. at T.
+                Weighting by sigma v counts the energy of the pairs that
+                actually annihilate
         Q_dec : Z_D decay removes energy m_ZD per decay in the rest frame; the
                 <m/E> time dilation cancels against <E> = m_ZD <E/m>.
         Q_el  : elastic chi f -> chi f drives T_hidden towards T,
@@ -358,20 +365,19 @@ def collisions(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     Q_ann, Q_dec, Q_el : the individual channels above [GeV^5]
     Gkin          : gamma(T) used for Q_el [GeV]; 0 if elastic is off
     """
-    mchi, mZD = params["mchi"], params["mZD"]
+    mZD = params["mZD"]
 
-    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM, sv_SM, sv_HS = _number_collision_terms(
+    C_chi, C_ZD, nchi_eq_SM, nZD_eq_SM = _number_collision_terms(
         params, nchi, nZD, T, Th, svxxZDZD_temp)
 
-    # energy injection; in-medium factors are all 1 unless in_medium_eps_eff
+    # energy injection; in-medium factors all 1 unless in_medium_eps_eff
     _, _, r_E_gain, r_E_loss = _in_medium_factors(params, T, Th)
     Q_dec = -mZD * params["gamma_ZDff"] * (nZD * r_E_loss - nZD_eq_SM * r_E_gain)
 
-    # mean chi energy of the annihilating (HS, T_h) and produced (SM, T) pairs
-    eps_bar_HS = mchi * _R(mchi / np.maximum(Th, VAL_FLOOR)) + 3.0 * Th
-    eps_bar_SM = mchi * _R(mchi / np.maximum(T, VAL_FLOOR)) + 3.0 * T
-    Q_ann = -2.0 * (eps_bar_HS * sv_HS * nchi**2
-                    - eps_bar_SM * sv_SM * nchi_eq_SM**2)
+    # E-weighted annihilation: HS pairs out at T_h, SM-produced pairs in at T
+    svE_HS = _sv(params["svE_xxee"], Th) + _sv(params["svE_xxWW"], Th)
+    svE_SM = _sv(params["svE_xxee"], T) + _sv(params["svE_xxWW"], T)
+    Q_ann = -(svE_HS * nchi**2 - svE_SM * nchi_eq_SM**2)
 
     if params.get("elastic", True):
         gamma_T = params.get("gamma_T", params.get("gamma_el", None))
@@ -401,8 +407,8 @@ def collisions_noTh(params, nchi, nZD, T, Th, svxxZDZD_temp="HS"):
     -------
     C_chi, C_ZD : number-density collision terms [GeV^4]
     """
-    C_chi, C_ZD = _number_collision_terms(
-        params, nchi, nZD, T, Th, svxxZDZD_temp)[:2]
+    C_chi, C_ZD, _, _ = _number_collision_terms(
+        params, nchi, nZD, T, Th, svxxZDZD_temp)
     return C_chi, C_ZD
 
 

@@ -18,13 +18,13 @@ import numba
 from numba import jit
 
 from dphase.grid import log_bin_edges
-from dphase.model import (_sigma_s_xxZDZD_scalar, sigma_s_xxZDZD, gD_of_alpha,
+from dphase.model import (_sigma_s_xxZDZD_scalar, sigma_s_xxZDZD, compute_couplings,
                           _cos_star_axis, _fill_aniso_weights)
 
 _ZDZDXX_DOF_RATIO = 8.0 / 9.0
 
 
-def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
+def _annih_loss_kernel(p, m_in, m_out, g_ZDchi, Nmu=16, reverse=False):
     r"""
     Loss kernel K(p1, p2) for 2 -> 2 annihilation within the dark sector,
 
@@ -42,7 +42,8 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
               Sets E(p), s, and the Moller velocity.
     m_out   : mass of the outgoing particles [GeV]. Enters only through the
               threshold and, for `reverse=True`, the crossing factor.
-    alphaD  : dark coupling strength
+    g_ZDchi : physical chi-chi-Z_D coupling gD cos(alpha), from
+              `model.compute_couplings`
     Nmu     : Gauss-Legendre (GL) nodes for the angular integral
     reverse : False for chi chibar -> Z_D Z_D, using sigma_xxZDZD(s) directly.
               True for Z_D Z_D -> chi chibar, obtained by crossing (see below).
@@ -54,7 +55,7 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
     Notes
     -----
     `sigma_s_xxZDZD` is always called in the chi chibar -> Z_D Z_D direction, i.e.
-    with argument order (gD, mchi, mZD), regardless of `reverse`. The
+    with argument order (g_ZDchi, mchi, mZD), regardless of `reverse`. The
     reverse cross section is then obtained from it by the crossing relation
 
         sigma_ZDZDxx = (8/9) (lambda_out / lambda_in) sigma_xxZDZD,
@@ -87,7 +88,7 @@ def _annih_loss_kernel(p, m_in, m_out, alphaD, Nmu=16, reverse=False):
 
     mchi, mZD = (m_out, m_in) if reverse else (m_in, m_out)
     sigma = np.zeros_like(s)
-    sigma[valid] = sigma_s_xxZDZD(gD_of_alpha(alphaD), mchi, mZD, s_v)
+    sigma[valid] = sigma_s_xxZDZD(g_ZDchi, mchi, mZD, s_v)
 
     if reverse:
         # Cross to Z_D Z_D -> chi chibar. lambda(s, m^2, m^2) = s(s - 4m^2) is the
@@ -121,7 +122,8 @@ def build_annihilation_loss_kernels(T_span, state, mchi, mZD, direction):
     Parameters
     ----------
     T_span    : temperatures [GeV]
-    state     : PhaseSpaceState, supplying `gstar_func`, `alphaD` and `Nmu`
+    state     : PhaseSpaceState, supplying `gstar_func`, `Nmu`, `epsilon`
+                and `alphaD` (for g_ZDchi = gD cos(alpha))
     mchi, mZD  : chi and dark photon masses [GeV]
     direction : "xxZDZD" for chi chibar -> Z_D Z_D, "ZDZDxx" for the reverse
 
@@ -136,12 +138,16 @@ def build_annihilation_loss_kernels(T_span, state, mchi, mZD, direction):
     # The incoming pair is chi chibar going forward, Z_D Z_D going in reverse.
     m_in, m_out = (mZD, mchi) if reverse else (mchi, mZD)
 
+    # chi-chi-Z_D coupling is fermion-independent; "e" is just a placeholder key
+    g_ZDchi = compute_couplings(epsilon=state.epsilon, fermion="e", mZD=mZD,
+                                alphaD=state.alphaD)["g_ZDchi"]
+
     out = []
     for T in T_span:
         p_phys = state.grid.p_phys(float(T), gstars_func=state.gstar_func)
         out.append(_annih_loss_kernel(
             p=p_phys, m_in=m_in, m_out=m_out,
-            alphaD=state.alphaD, Nmu=state.Nmu, reverse=reverse,
+            g_ZDchi=g_ZDchi, Nmu=state.Nmu, reverse=reverse,
         ))
     return out
 
@@ -175,7 +181,7 @@ _ANGULAR_MODES = ("isotropic", "anisotropic")
 def _build_gain_cache_inner_bilinear(
     p_out, E_out, p_in, E_in, PS_in, invW_out,
     mu_in, w_in, mu_out, wP_out,
-    m_out, m_in, alphaD, yield_out, reverse,
+    m_out, m_in, g_ZDchi, yield_out, reverse,
     anisotropic, w_out, cos_phi, w_phi,
 ):
     """
@@ -208,7 +214,7 @@ def _build_gain_cache_inner_bilinear(
     mu_out, wP_out  : nodes and weights for the CM emission
                       angle of the outgoing particle, relative to the boost axis
     m_out, m_in     : outgoing and incoming masses [GeV]
-    alphaD          : dark coupling strength
+    g_ZDchi         : physical chi-chi-Z_D coupling gD cos(alpha)
     yield_out       : number of the tracked species produced per reaction
                       (2 for the two Z_D from chi chibar -> Z_D Z_D, 1 otherwise)
     reverse         : False for chi chibar -> Z_D Z_D; True for Z_D Z_D -> chi chibar,
@@ -239,7 +245,6 @@ def _build_gain_cache_inner_bilinear(
     m_in_sq = m_in * m_in
     m_out_sq = m_out * m_out
     thresh = 4.0 * m_out_sq          # outgoing pair on shell
-    gD = np.sqrt(4.0 * np.pi * alphaD)
 
     # The |M|^2 shape always takes (fermion, vector) masses.
     m_ferm = m_out if reverse else m_in
@@ -284,9 +289,9 @@ def _build_gain_cache_inner_bilinear(
                 # sigma_s_xxZDZD always takes (s, mchi, mZD), so the two masses
                 # swap roles between the directions.
                 if reverse:
-                    sig = _sigma_s_xxZDZD_scalar(s, m_out, m_in, gD)
+                    sig = _sigma_s_xxZDZD_scalar(s, m_out, m_in, g_ZDchi)
                 else:
-                    sig = _sigma_s_xxZDZD_scalar(s, m_in, m_out, gD)
+                    sig = _sigma_s_xxZDZD_scalar(s, m_in, m_out, g_ZDchi)
                 if not np.isfinite(sig) or sig <= 0.0:
                     continue
                 if reverse:
@@ -394,7 +399,7 @@ def _aniso_phi_nodes(Nphi):
 
 def _build_gain_cache(
     p_out, p_in, dlogp_in,
-    m_chi, m_ZD, alphaD,
+    m_chi, m_ZD, g_ZDchi,
     Nmu_in, Nmu_out, yield_out, reverse,
     angular, Nphi,
 ):
@@ -418,7 +423,7 @@ def _build_gain_cache(
     idx_out, k_idx, l_idx, w_base = _build_gain_cache_inner_bilinear(
         p_out, E_out, p_in, E_in, PS_in, invW_out,
         mu_in_n, w_in_n, mu_out_n, wP_out,
-        float(m_out), float(m_in), float(alphaD),
+        float(m_out), float(m_in), float(g_ZDchi),
         float(yield_out), bool(reverse),
         angular == "anisotropic", 2.0 * wP_out, cos_phi, w_phi,
     )
@@ -437,7 +442,7 @@ def _build_gain_cache(
 
 def build_gain_cache_xxZDZD(
     p_out, p_in, dlogp_in,
-    m_chi, m_ZD, alphaD,
+    m_chi, m_ZD, g_ZDchi,
     Nmu_in=4, Nmu_out=4,
     yield_out=1.0,
     angular="isotropic", Nphi=8,
@@ -455,7 +460,8 @@ def build_gain_cache_xxZDZD(
     p_in     : momentum grid the incoming pair is read from [GeV]
     dlogp_in : log-momentum bin widths for `p_in`
     m_chi, m_ZD : masses [GeV]
-    alphaD   : dark coupling strength
+    g_ZDchi  : physical chi-chi-Z_D coupling gD cos(alpha), from
+               `model.compute_couplings`
     Nmu_in, Nmu_out : Gauss-Legendre nodes for the incoming-pair angle and the
                CM emission angle
     yield_out : products of the tracked species per reaction -- 2 here, since
@@ -469,14 +475,14 @@ def build_gain_cache_xxZDZD(
     p_out, p_in and angular.
     Consume it with `apply_gain_cache`.
     """
-    return _build_gain_cache(p_out, p_in, dlogp_in, m_chi, m_ZD, alphaD,
+    return _build_gain_cache(p_out, p_in, dlogp_in, m_chi, m_ZD, g_ZDchi,
                              Nmu_in, Nmu_out, yield_out, False,
                              angular, Nphi)
 
 
 def build_gain_cache_ZDZDxx(
     p_out, p_in, dlogp_in,
-    m_chi, m_ZD, alphaD,
+    m_chi, m_ZD, g_ZDchi,
     Nmu_in=4, Nmu_out=4,
     yield_out=1.0,
     angular="isotropic", Nphi=8,
@@ -493,7 +499,7 @@ def build_gain_cache_ZDZDxx(
     `yield_out` is 1 here: one chi per reaction, with the chibar tracked as the
     same population (see `PhaseSpaceState.total_DM_number_density`).
     """
-    return _build_gain_cache(p_out, p_in, dlogp_in, m_chi, m_ZD, alphaD,
+    return _build_gain_cache(p_out, p_in, dlogp_in, m_chi, m_ZD, g_ZDchi,
                              Nmu_in, Nmu_out, yield_out, True,
                              angular, Nphi)
 
@@ -501,7 +507,7 @@ def build_gain_cache_ZDZDxx(
 def build_fixed_grid_gain_caches_xxZDZD(
     p_cache,
     *,
-    m_chi, m_ZD, alphaD,
+    m_chi, m_ZD, g_ZDchi,
     yield_out_chi=1.0,
     yield_out_ZD=2.0,
     Nmu_in=4, Nmu_out=4,
@@ -519,7 +525,8 @@ def build_fixed_grid_gain_caches_xxZDZD(
     Parameters
     ----------
     p_cache : shared momentum grid, used as both p_in and p_out [GeV]
-    m_chi, m_ZD, alphaD : model parameters
+    m_chi, m_ZD : masses [GeV]
+    g_ZDchi : physical chi-chi-Z_D coupling gD cos(alpha)
     yield_out_chi, yield_out_ZD : products per reaction, 1 and 2 respectively.
     Nmu_in, Nmu_out, angular, Nphi : passed through to the builders
 
@@ -530,7 +537,7 @@ def build_fixed_grid_gain_caches_xxZDZD(
     p_cache = np.asarray(p_cache, float)
     dlogp_cache = log_bin_edges(p_cache)
     common = dict(p_out=p_cache, p_in=p_cache, dlogp_in=dlogp_cache,
-                  m_chi=m_chi, m_ZD=m_ZD, alphaD=alphaD,
+                  m_chi=m_chi, m_ZD=m_ZD, g_ZDchi=g_ZDchi,
                   Nmu_in=Nmu_in, Nmu_out=Nmu_out,
                   angular=angular, Nphi=Nphi)
 
@@ -546,7 +553,7 @@ def build_fixed_grid_gain_caches_xxZDZD(
         cache_chi_from_ZDZD=cache_chi_from_ZDZD,
         cache_ZD_from_xx=cache_ZD_from_xx,
         _mchi=m_chi, _mZD=m_ZD,
-        _alphaD=alphaD,
+        _g_ZDchi=g_ZDchi,
         _Nmu_in=Nmu_in, _Nmu_out=Nmu_out,
         _angular=angular, _Nphi=Nphi,
     )
@@ -562,7 +569,8 @@ def build_annihilation_gain_caches(T_span, state, angular="anisotropic", Nphi=8)
     Parameters
     ----------
     T_span  : temperatures [GeV]
-    state   : PhaseSpaceState, supplying grid, gstar_func, species, alphaD, Nmu
+    state   : PhaseSpaceState, supplying grid, gstar_func, species, Nmu,
+              epsilon and alphaD (for g_ZDchi = gD cos(alpha))
     angular : CM emission model:
               "isotropic"   (default) flat in cos(theta_b) about the boost axis
               "anisotropic" true CM angular distribution, same total rate.
@@ -574,6 +582,11 @@ def build_annihilation_gain_caches(T_span, state, angular="anisotropic", Nphi=8)
     with T_span. Assign to `state.gain_caches_xxZDZD`.
 
     """
+    # chi-chi-Z_D coupling is fermion-independent; "e" is just a placeholder key
+    g_ZDchi = compute_couplings(epsilon=state.epsilon, fermion="e",
+                                mZD=state.species["ZD"].mass_GeV,
+                                alphaD=state.alphaD)["g_ZDchi"]
+
     out = []
     for T in T_span:
         p_phys = state.grid.p_phys(float(T), gstars_func=state.gstar_func)
@@ -581,7 +594,7 @@ def build_annihilation_gain_caches(T_span, state, angular="anisotropic", Nphi=8)
             p_phys,
             m_chi=state.species["chi"].mass_GeV,
             m_ZD=state.species["ZD"].mass_GeV,
-            alphaD=state.alphaD,
+            g_ZDchi=g_ZDchi,
             Nmu_in=state.Nmu,
             Nmu_out=state.Nmu,
             yield_out_chi=1.0,

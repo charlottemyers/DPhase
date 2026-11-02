@@ -7,12 +7,15 @@ Here, both scattering partners are dark-sector particles of comparable mass. The
 therefore has to be a full 2 -> 2 redistribution, and the outgoing state depends on t as well
 as s, so the quadrature needs BOTH CM angles: (k, l) x mu_in x mu_CM x phi_CM
 
-Detailed balance
-----------------
+Gain, loss and the fixed point
+------------------------------
 The event cache stores an unnormalized rate R per (k, l, i_chi, i_ZD) tuple
-rather than a pre-divided deposit weight. Gain and loss are handled together,
-per event, and the operator has the correct fixed point by construction rather than by
-cancellation between two separately-computed terms.
+rather than a pre-divided deposit weight, and gain and loss are applied together
+per entry (see `_apply_xZD_delta_numba`). This makes number conservation exact
+for any f. It does NOT make the binned equilibrium an exact fixed point: the
+bilinear split sends each quadrature point to bins whose energies only bracket
+E_k + E_l, so f_eq is stationary, and energy conserved, only up to O(h^2)
+in the log bin width h.
 """
 
 import numpy as np
@@ -454,7 +457,13 @@ def _dedup_event_entries(k_idx, l_idx, i_chi, i_ZD, R, Np):
 @jit(nopython=True, cache=True)
 def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
     """
-    Apply the per-event delta operator. For each event (k, l, i_chi, i_ZD, R):
+    Apply the per-entry exchange operator.
+
+    Each cache entry (k, l, i_chi, i_ZD, R) is one 2 -> 2 channel: a chi and a
+    Z_D move from bins (k, l) to bins (i_chi, i_ZD). The bilinear split in the
+    builder divides the RATE of a quadrature point among four such channels
+    (weights sum to 1). So the forward process is a sum of 2 -> 2 channels,
+    not one 2 -> many process. For each entry:
 
         delta          = (R/2) * (f_chi[k] f_ZD[l] - f_chi[i_chi] f_ZD[i_ZD])
         df_chi[k]     -= delta / W[k]        # chi leaves the incoming bin
@@ -462,26 +471,35 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
         df_ZD[l]       -= delta / W[l]
         df_ZD[i_ZD]     += delta / W[i_ZD]
 
-    Two properties follow: Delta vanishes whenever the
-    distribution is balanced across the event, so discrete detailed balance
-    holds per event rather. And every event removes exactly as much as it adds, so
-    particle number is conserved bin-to-bin.
+    Guaranteed, for any f:
+      - number conservation, per entry: each entry removes delta from bins k
+        and l and adds the same delta to i_chi and i_ZD. The total scattered
+        out of (k, l) is the sum over all of its entries.
+      - a discrete H-theorem: d/dt sum W f (ln f - 1) <= 0, since each entry
+        contributes -(R/2) (F_a - F_b) ln(F_a / F_b), with
+        F_a = f_chi[k] f_ZD[l] and F_b = f_chi[i_chi] f_ZD[i_ZD].
 
-    factor 1/2: delta includes the reverse process explicitly, but the
-    cache also contains every reverse configuration as its own event, so
-    without it each process is counted twice.
+    Reverse process and the factor 1/2: the second term of delta runs
+    (i_chi, i_ZD) -> (k, l) with this entry's rate R. The cache's own entry for
+    that reverse channel was built from the quadrature at (i_chi, i_ZD), so its
+    rate R' generally differs from R, and for some entries there is no reverse
+    entry at all. Summed over both, the net exchange between the two bin pairs is
+
+        (R + R')/2 * (F_a - F_b),
+
+    so the 1/2 symmetrizes the forward and reverse discrete rates, not
+    removes an exact double count. In the continuum limit R' -> R and this
+    reduces to the usual gain - loss.
 
     The result is per dof, with no partner-dof factor; see
     `collisions.xZD_elastic_collision_rhs` for  prefactors.
-
-    Runs once per Newton iteration over the full deduplicated event list.
 
     R is the rate associated with each event, as computed in the gain cache.
     """
     df_chi = np.zeros(Np)
     df_ZD   = np.zeros(Np)
 
-    # loop over each event, recalling that len(k_idx) == number of events
+    # loop over each entry (i.e. each 2-> 2 channel)
     for i in range(k_idx.shape[0]):
         # k, l = indices of the incoming momentum bins for chi and Z_D, respectively
         k  = k_idx[i]
@@ -495,9 +513,9 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
         # index into the current distributions to compute the delta for this event
         # delta = per-event change in the distribution functions for this event;
         delta = 0.5 * R[i] * (f_chi[k] * f_ZD[l] - f_chi[ic] * f_ZD[iZD])
-        df_chi[k]  -= delta * invW[k]  # remove from incoming chi bin
-        df_chi[ic] += delta * invW[ic] # add to outgoing chi bin
-        df_ZD[l]    -= delta * invW[l]  # remove from incoming Z_D bin
+        df_chi[k]  -= delta * invW[k]     # remove from incoming chi bin
+        df_chi[ic] += delta * invW[ic]    # add to outgoing chi bin
+        df_ZD[l]    -= delta * invW[l]    # remove from incoming Z_D bin
         df_ZD[iZD]   += delta * invW[iZD] # add to outgoing Z_D bin
     return df_chi, df_ZD
 

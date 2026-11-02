@@ -129,10 +129,15 @@ class PhaseSpaceState:
     # Derived quantities
     # ------------------------------------------------------------------
     def number_density(self, name, T):
-        """n = g/(2 pi^2) int dp p^2 f(p)   [GeV^3]"""
+        """
+        n = g/(2 pi^2) int dp p^2 f(p)   [GeV^3]
+
+        Summed with the grid's bin measure p^3 dlogp, the same one the collision
+        operators use.
+        """
         sp = self.species[name]
         p = self.grid.p_phys(T, gstars_func=self.gstar_func)
-        return sp.dof / (2.0 * np.pi**2) * np.trapezoid(p**2 * self.f[name], p)
+        return sp.dof / (2.0 * np.pi**2) * np.sum(p**3 * self.f[name] * self.grid.dlogp)
 
     def total_DM_number_density(self, T):
         """

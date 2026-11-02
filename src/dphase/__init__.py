@@ -5,16 +5,6 @@ Solves the momentum-resolved Boltzmann equation for a Dirac fermion chi
 coupled to the Standard Model through a kinetically mixed dark photon Z_D,
 tracking the distribution function f_chi(p, T).
 
-Two solvers are provided:
-
-  `solve_BE`  -- the phase-space solver. Evolves f_chi(p, T) and f_ZD(p, T) on
-                 a comoving momentum grid with no assumption that either
-                 species keeps a thermal shape.
-  `cbe`       -- the number-density solver, tracking (n_chi, n_ZD, T_hidden)
-                 under an assumed Maxwell-Boltzmann shape. Cheaper, and
-                 the baseline the phase-space solver is validated against in
-                 the limit where kinetic equilibrium holds.
-
 Everything in this package except `model.py` is independent of the particular
 dark sector model; see that module's docstring to swap in a different mediator.
 

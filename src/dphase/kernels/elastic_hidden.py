@@ -19,12 +19,33 @@ from dphase.model import compute_couplings
 # Cache construction
 # ===========================================================================
 
+@jit(nopython=True, inline='always')
+def _bracket_energy(p_grid, E_grid, p, E):
+    """
+    Lower bracketing bin index of momentum p on p_grid, and the fraction of
+    the deposit that goes to the upper bin, linear in energy so that the
+    split reproduces E on average.
+    """
+    Np = p_grid.shape[0]
+    i_lo = np.searchsorted(p_grid, p) - 1
+    if i_lo < 0:
+        i_lo = 0
+    if i_lo > Np - 2:
+        i_lo = Np - 2
+    frac = (E - E_grid[i_lo]) / (E_grid[i_lo + 1] - E_grid[i_lo])
+    if frac < 0.0:
+        frac = 0.0
+    elif frac > 1.0:
+        frac = 1.0
+    return i_lo, frac
+
+
 @jit(nopython=True, cache=True)
 def _build_xZD_elastic_cache_inner(
     p_grid, E_chi, E_ZD, PS,
     mu_in_n, w_in_n, mu_cm_n, w_cm_n,
     cos_phi_n, w_phi_n,
-    m_chi, m_ZD, g_ZDchi4, Navg,
+    m_chi, m_ZD, g_ZDchi4, Navg, joint,
 ):
     """
     Compiled event-list builder. Walks every quadrature point
@@ -33,12 +54,33 @@ def _build_xZD_elastic_cache_inner(
 
     and, for each, boosts the outgoing pair from the CM frame back to the
     cosmological frame. The outgoing momenta (p3, p4) are continuous and land
-    between grid points, so each quadrature point is split BILINEARLY, linear
-    in energy, over the four combinations of bracketing bins with weights that sum to 1.
+    between grid points, so each quadrature point is split over four
+    (chi bin, Z_D bin) pairs, linear in energy, with weights that sum to 1:
+    independently per species (joint=False, "bilinear") or with the Z_D split
+    conditioned on the chi bin so each chi branch conserves the total binned
+    energy (joint=True, "joint").
 
     Each emitted sub-event is a tuple (k, l, i_chi, i_ZD, R). R is an
     unnormalized rate. Also accumulates K_loss[k, l] = (sum of R) / (W[k] W[l]),
     which is used only by the solver's rate-capping diagnostic, never during evolution.
+
+
+    Deposition Details
+    ----------
+    Each quadrature point gives continuous outgoing energies (E3, E4), which are
+    split over the bracketing (chi, Z_D) bins with weights that conserve number
+    and each species' mean energy. Two splits are available (`deposit`):
+
+    "bilinear" : chi and Z_D split independently, w = w_chi * w_ZD. A bin pair's
+                energy can miss E_tot by up to one chi bin width plus one
+                Z_D bin width.
+    "joint"    : chi split first; for each chi bin, the Z_D is split around the
+                energy that conserves the total binned energy E_k + E_l given
+                that chi bin. Each chi branch then conserves energy on average,
+                and a bin pair's energy error is at most one Z_D bin width.
+
+    Neither split is exact: chi and Z_D share one log-spaced momentum grid with
+    different masses, so in general no bin pair has binned energy exactly E_k + E_l.
 
     Parameters
     ----------
@@ -52,6 +94,7 @@ def _build_xZD_elastic_cache_inner(
     m_chi, m_ZD        : masses [GeV]
     g_ZDchi4          : g_ZDchi^4, the physical chi-chi-Z_D coupling to the 4th
     Navg              : spin/polarisation averaging divisor
+    joint             : True for the "joint" deposit, False for "bilinear"
 
     Returns
     -------
@@ -81,8 +124,6 @@ def _build_xZD_elastic_cache_inner(
 
     p_lo = p_grid[0]
     p_hi = p_grid[-1]
-
-    # k = incoming chi bin, l = incoming Z_D bin, mu_in = cos(theta) between them in lab
 
     # iterate over magnitude of the incoming momenta
     for k in range(Np):
@@ -128,9 +169,9 @@ def _build_xZD_elastic_cache_inner(
                 else:
                     P_tot = np.sqrt(P_tot_sq)
                     beta  = P_tot / E_tot            # CM velocity in the lab
-                    gamma = E_tot / sqrt_s           # = 1/sqrt(1 - beta^2)
+                    gamma = E_tot / sqrt_s
                     # psi is the CM-frame angle between the boost axis and the incoming chi.
-                    # Ties the CM emission angles to lab-frame momenta, via mu_b below.
+                    # Ties the CM emission angles to lab-frame momenta, via mu_b.
 
                     # p_chi_dot_b = projection of chi momentum onto the boost axis in the lab frame
                     # p_chi_par_cm = component of chi momentum along the boost axis in the CM frame
@@ -170,8 +211,8 @@ def _build_xZD_elastic_cache_inner(
                                  + 4.0*m2_chi*m2_ZD + m2_ZD*m2_ZD - s*u_val)
                     Tsu = 8.0 * (4.0*m2_chi*m2_chi + 2.0*m2_chi*m2_ZD
                                  - (m2_chi + 2.0*m2_ZD) * t_val)
-                    xi_  = s - m2_chi     #s-channel propagator factor
-                    eta_ = u_val - m2_chi #u-channel propagator factor
+                    xi_  = s - m2_chi           # s-channel propagator factor
+                    eta_ = u_val - m2_chi       # u-channel propagator factor
                     if xi_ == 0.0 or eta_ == 0.0:
                         continue
                     M2 = g_ZDchi4 / Navg * (Ts/(xi_*xi_) + Tu/(eta_*eta_)
@@ -186,8 +227,8 @@ def _build_xZD_elastic_cache_inner(
                     sin_th = np.sqrt(sin_th_sq)
 
                     # phi is the azimuth of the outgoing pair about the boost
-                    # axis. |M|^2 depends on t, hence on theta_CM but NOT on phi
-                    # phi sets how the CM angles project onto the lab frame.
+                    # axis. |M|^2 depends on t, but NOT on phi.
+                    # phi sets how the CM angles are projected back to the lab frame.
                     for mp in range(Nphi):
                         cos_phi = cos_phi_n[mp]
                         w_p     = w_phi_n[mp]
@@ -207,7 +248,7 @@ def _build_xZD_elastic_cache_inner(
                         if p3 <= p_lo or p3 >= p_hi:
                             continue
 
-                        # The outgoing Z_D, fixed by energy-momentum conservation.
+                        # energy of the outgoing Z_D
                         E4 = gamma * (E_ZD_star - beta * p_cm * mu_b)
 
                         p4_sq = E4 * E4 - m2_ZD
@@ -224,53 +265,59 @@ def _build_xZD_elastic_cache_inner(
                         # Discretized loss rate, diagnostic ONLY
                         K_loss_disc[k, l] += rate_event / pair_pref
 
-                        # Bracketing bins for each product, then a bilinear
-                        # split, linear in energy, over the four combinations.
-                        i_chi_lo = np.searchsorted(p_grid, p3) - 1
-                        if i_chi_lo < 0:
-                            i_chi_lo = 0
-                        if i_chi_lo > Np - 2:
-                            i_chi_lo = Np - 2
+                        # chi: bracketing bins and energy-linear split, the
+                        # same for both deposits.
+                        i_chi_lo, alpha_chi = _bracket_energy(p_grid, E_chi, p3, E3)
                         i_chi_hi = i_chi_lo + 1
 
-                        # Interpolation fraction for the chi particle between its bracketing bins
-                        # E3 = lab-frame energy of the outgoing chi particle (i.e. the true energy)
-                        alpha_chi = (E3 - E_chi[i_chi_lo]) \
-                                    / (E_chi[i_chi_hi] - E_chi[i_chi_lo])
-                        if alpha_chi < 0.0:
-                            alpha_chi = 0.0
-                        elif alpha_chi > 1.0:
-                            alpha_chi = 1.0
+                        # Z_D: for "joint", split around the energy that
+                        # conserves the incoming binned energy given each chi bin;
+                        # one Z_D bracket per chi branch. Falls back to
+                        # the independent split if either target is out of bounds
+                        use_joint = False
+                        if joint:
+                            E_tgt_lo = E_tot - E_chi[i_chi_lo]
+                            E_tgt_hi = E_tot - E_chi[i_chi_hi]
+                            p2_lo = E_tgt_lo * E_tgt_lo - m2_ZD
+                            p2_hi = E_tgt_hi * E_tgt_hi - m2_ZD
+                            if p2_lo > 0.0 and p2_hi > 0.0:
+                                pt_lo = np.sqrt(p2_lo)
+                                pt_hi = np.sqrt(p2_hi)
+                                # check if the target momenta are within the grid bounds
+                                if (p_lo < pt_lo < p_hi) and (p_lo < pt_hi < p_hi):
+                                    use_joint = True
 
-                        i_ZD_lo = np.searchsorted(p_grid, p4) - 1
-                        if i_ZD_lo < 0:
-                            i_ZD_lo = 0
-                        if i_ZD_lo > Np - 2:
-                            i_ZD_lo = Np - 2
-                        i_ZD_hi = i_ZD_lo + 1
-                        alpha_ZD = (E4 - E_ZD[i_ZD_lo]) \
-                                  / (E_ZD[i_ZD_hi] - E_ZD[i_ZD_lo])
-                        if alpha_ZD < 0.0:
-                            alpha_ZD = 0.0
-                        elif alpha_ZD > 1.0:
-                            alpha_ZD = 1.0
+                        if use_joint:
+                            # Z_D bracket for each chi branch
+                            # for each of the sub-events, get the momenta that is closest to the
+                            # target p (the p that satisfies E = E_tot - E_chi)
+                            iZ_a, alpha_a = _bracket_energy(p_grid, E_ZD, pt_lo, E_tgt_lo)
+                            iZ_b, alpha_b = _bracket_energy(p_grid, E_ZD, pt_hi, E_tgt_hi)
+                        else:
+                            # independent split around E4, the same for both branches
+                            iZ_a, alpha_a = _bracket_energy(p_grid, E_ZD, p4, E4)
+                            iZ_b, alpha_b = iZ_a, alpha_a
+                        i_ZD_lo = iZ_a
+                        i_ZD_hi = iZ_a + 1
+                        i_ZD_lo_b = iZ_b
+                        i_ZD_hi_b = iZ_b + 1
 
                         # because we're depositing 4 sub-events corresponding to the four combinations of the bracketing bins
                         # the weights for these sub-events are given by the bilinear interpolation fractions
                         # weights sum to 1 and distribute the event rate among the four sub-events
-                        w_ll = (1.0 - alpha_chi) * (1.0 - alpha_ZD)
-                        w_lh = (1.0 - alpha_chi) * alpha_ZD
-                        w_hl = alpha_chi         * (1.0 - alpha_ZD)
-                        w_hh = alpha_chi         * alpha_ZD
+                        w_ll = (1.0 - alpha_chi) * (1.0 - alpha_a)
+                        w_lh = (1.0 - alpha_chi) * alpha_a
+                        w_hl = alpha_chi         * (1.0 - alpha_b)
+                        w_hh = alpha_chi         * alpha_b
 
                         # (i_chi_lo, i_ZD_lo)
                         # k, l = incoming chi and Z_D momenta
+                        # i_chi_lo, i_ZD_lo = indices for the outgoing chi and Z_D particles in the momentum grid
+                        # R = rate weight for this sub-event
                         ev_k_buf[n_ev]    = k
                         ev_l_buf[n_ev]    = l
-                        # i_chi_lo, i_ZD_lo = indices for the outgoing chi and Z_D particles in the momentum grid
                         ev_ichi_buf[n_ev] = i_chi_lo
                         ev_iZD_buf[n_ev]   = i_ZD_lo
-                        # R = rate weight for this sub-event
                         ev_R_buf[n_ev]    = w_ll * rate_event
                         n_ev += 1
                         # (i_chi_lo, i_ZD_hi)
@@ -284,14 +331,14 @@ def _build_xZD_elastic_cache_inner(
                         ev_k_buf[n_ev]    = k
                         ev_l_buf[n_ev]    = l
                         ev_ichi_buf[n_ev] = i_chi_hi
-                        ev_iZD_buf[n_ev]   = i_ZD_lo
+                        ev_iZD_buf[n_ev]   = i_ZD_lo_b
                         ev_R_buf[n_ev]    = w_hl * rate_event
                         n_ev += 1
                         # (i_chi_hi, i_ZD_hi)
                         ev_k_buf[n_ev]    = k
                         ev_l_buf[n_ev]    = l
                         ev_ichi_buf[n_ev] = i_chi_hi
-                        ev_iZD_buf[n_ev]   = i_ZD_hi
+                        ev_iZD_buf[n_ev]   = i_ZD_hi_b
                         ev_R_buf[n_ev]    = w_hh * rate_event
                         n_ev += 1
 
@@ -303,7 +350,7 @@ def _build_xZD_elastic_cache_inner(
 
 def build_xZD_elastic_gain_cache(
     p_grid, dlogp, m_chi, m_ZD, g_ZDchi,
-    Nmu_in=8, Nmu_cm=8, Nphi_cm=4
+    Nmu_in=8, Nmu_cm=8, Nphi_cm=4, deposit="joint",
 ):
     """
     Build the dark Compton event cache for one physical momentum grid.
@@ -322,6 +369,8 @@ def build_xZD_elastic_gain_cache(
     Nmu_in     : nodes for the lab-frame incoming angle
     Nmu_cm     : nodes for cos(theta_CM)
     Nphi_cm    : nodes for the azimuth. Uniform rather than GL.
+    deposit    : "bilinear" or "joint" (default); how each quadrature point is
+                 split over outgoing bin pairs
 
     Returns
     -------
@@ -332,6 +381,9 @@ def build_xZD_elastic_gain_cache(
         K_loss        : (Np, Np) discretized loss rate, DIAGNOSTIC ONLY
 
     """
+    if deposit not in ("bilinear", "joint"):
+        raise ValueError(f"deposit must be 'bilinear' or 'joint', got {deposit!r}")
+
     p_grid = np.ascontiguousarray(p_grid, dtype=np.float64)
     dlogp  = np.ascontiguousarray(dlogp,  dtype=np.float64)
 
@@ -365,13 +417,14 @@ def build_xZD_elastic_gain_cache(
         np.ascontiguousarray(cos_phi_n, dtype=np.float64),
         np.ascontiguousarray(w_phi_n,   dtype=np.float64),
         float(m_chi), float(m_ZD), float(g_ZDchi4), float(Navg),
+        deposit == "joint",
     )
     # Raw list has one entry per sub-event, so it grows as
     # 4 * Np^2 * Nmu_in * Nmu_cm * Nphi_cm: more entries than there are
     # distinct (k, l, i_chi, i_ZD) tuples, since many angle combinations
     # interpolate into the same four bins. Collapsing them speeds up the apply step.
-    # (recall the factor of 4 comes from the four sub-events generated per scattering
-    # event due to bilinear interpolation)
+    # (recall the factor of 4 comes from the four (chi, Z_D) bin pairs each
+    # quadrature point is split over)
     Np_grid = p_grid.shape[0]
     ev_k_c, ev_l_c, ev_ichi_c, ev_iZD_c, ev_R_c = _dedup_event_entries(
         ev_k, ev_l, ev_ichi, ev_iZD, ev_R, Np_grid)
@@ -388,6 +441,7 @@ def build_xZD_elastic_gain_cache(
         _m_chi=m_chi, _m_ZD=m_ZD,
         _g_ZDchi=g_ZDchi,
         _Nmu_in=Nmu_in, _Nmu_cm=Nmu_cm, _Nphi_cm=Nphi_cm,
+        _deposit=deposit,
     )
 
 
@@ -462,10 +516,9 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
         df_ZD[l]       -= delta / W[l]
         df_ZD[i_ZD]     += delta / W[i_ZD]
 
-    Guaranteed, for any f:
-      - number conservation, per entry: each entry removes delta from bins k
-        and l and adds the same delta to i_chi and i_ZD. The total scattered
-        out of (k, l) is the sum over all of its entries..
+    Number conservation is guaranteed for any f, per entry: each entry removes delta from bins k
+    and l and adds the same delta to i_chi and i_ZD. The total scattered
+    out of (k, l) is the sum over all of its entries.
 
     Reverse process and the factor 1/2: the second term of delta runs
     (i_chi, i_ZD) -> (k, l) with this entry's rate R. The cache's own entry for
@@ -477,6 +530,8 @@ def _apply_xZD_delta_numba(k_idx, l_idx, i_chi, i_ZD, R, invW, f_chi, f_ZD, Np):
 
     so the 1/2 symmetrizes the forward and reverse discrete rates.
     In the continuum limit R' -> R and this reduces to the usual gain - loss.
+    In equilibrium, f_chi[k] * f_ZD[l] = f_chi[i_chi] * f_ZD[i_ZD] for each channel,
+    by energy conservation, so delta = 0 and there is no net exchange in equilibrium.
 
     The result is per dof, with no partner-dof factor; see
     `collisions.xZD_elastic_collision_rhs` for  prefactors.
@@ -549,7 +604,8 @@ def apply_xZD_elastic_loss(p_grid, dlogp, K_loss, f_chi, f_ZD):
 # Temperature-grid builder
 # ===========================================================================
 
-def build_xZDxZD_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4):
+def build_xZDxZD_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4,
+                             deposit="joint"):
     """
     Tabulate the dark Compton cache on a temperature grid.
 
@@ -558,7 +614,7 @@ def build_xZDxZD_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4):
     T_span : temperatures [GeV]
     state  : PhaseSpaceState, supplying grid, gstar_func, species, epsilon
              and alphaD (for g_ZDchi = gD cos(alpha))
-    Nmu_in, Nmu_cm, Nphi_cm : passed through to the builder
+    Nmu_in, Nmu_cm, Nphi_cm, deposit : passed through to the builder
 
     Returns
     -------
@@ -579,7 +635,7 @@ def build_xZDxZD_gain_caches(T_span, state, Nmu_in=8, Nmu_cm=8, Nphi_cm=4):
         cache_T = build_xZD_elastic_gain_cache(
             p_grid=p, dlogp=state.grid.dlogp,
             m_chi=m_chi, m_ZD=m_ZD, g_ZDchi=g_ZDchi,
-            Nmu_in=Nmu_in, Nmu_cm=Nmu_cm, Nphi_cm=Nphi_cm,
+            Nmu_in=Nmu_in, Nmu_cm=Nmu_cm, Nphi_cm=Nphi_cm, deposit=deposit,
         )
         out.append(cache_T)
         if i % max(1, n_T // 10) == 0:

@@ -42,7 +42,7 @@ Rate capping
 Some operators run so far above H that backward Euler struggles to
 converge. Each step measures their per-particle rate at the peak of p^2 f and,
 if it exceeds the ceiling, scales the operator down. The caps only engage where the
-process is deep in equilibrium, so slowing it down to Gamma_H_max * H leaves it in equilibrium.
+process is deep in equilibrium, so slowing it down to kappa_max * H leaves it in equilibrium.
 """
 
 import numpy as np
@@ -170,7 +170,7 @@ def _peak_rate_over_H(loss_chi, loss_ZD, f_chi, f_ZD, p, H):
 
 
 def solve_BE(state, T_grid,
-             Gamma_H_max=50.0,
+             kappa_max=50.0,
              include_scatter=True,
              include_dark_compton=True,
              include_heavy_scatter=True,
@@ -189,7 +189,7 @@ def solve_BE(state, T_grid,
     T_grid : array of temperatures [GeV], descending
         The integration grid, prescribed and not adapted. The returned
         snapshots are on this grid.
-    Gamma_H_max : float
+    kappa_max : float
         Rate ceiling for chi chibar <-> Z_D Z_D, in units of H. Set to `np.inf`
         to disable capping.
     include_scatter : bool
@@ -227,7 +227,7 @@ def solve_BE(state, T_grid,
     scatter_enabled = bool(include_scatter)
     dc_enabled = bool(include_dark_compton)
 
-    Gamma_H_max_dc = Gamma_H_max
+    kappa_max_dc = kappa_max
 
     # ---- in-medium effects ----
     if in_medium_eps_eff:
@@ -347,8 +347,8 @@ def solve_BE(state, T_grid,
                 T_next, f_eval, state, names, Np)
             ratio_dc = _peak_rate_over_H(loss_chi_dc, loss_ZD_dc,
                                          f_eval[sl_chi], f_eval[sl_ZD], p, H)
-            scale = (Gamma_H_max_dc / ratio_dc
-                     if ratio_dc > Gamma_H_max_dc else 1.0)
+            scale = (kappa_max_dc / ratio_dc
+                     if ratio_dc > kappa_max_dc else 1.0)
             return scale, ratio_dc
 
         # ---- measure the hidden-sector rate, to set hs_scale ----
@@ -358,8 +358,8 @@ def solve_BE(state, T_grid,
                                             names, Np)
         eff_ratio = _peak_rate_over_H(loss_chi, loss_ZD, f_probe_hs[sl_chi],
                                       f_probe_hs[sl_ZD], p, H)
-        hs_scale = (Gamma_H_max / eff_ratio
-                    if eff_ratio > Gamma_H_max else 1.0)
+        hs_scale = (kappa_max / eff_ratio
+                    if eff_ratio > kappa_max else 1.0)
 
         dc_scale, dc_ratio = compute_dc_scale(f_current)
 
